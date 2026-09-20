@@ -59,9 +59,7 @@ export async function POST(req: NextRequest) {
         attendees[0];
 
       const isVisual =
-        body.isVisualMode !== undefined
-          ? Boolean(body.isVisualMode)
-          : /visual|watch|headed|live/i.test(lastMsg);
+        /visual|watch|headed|live/i.test(lastMsg) || Boolean(body.isVisualMode);
 
       automationRunner.startBatch(
         events.map((e) => e.id),

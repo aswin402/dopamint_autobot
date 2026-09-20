@@ -174,9 +174,7 @@ app.post("/api/chat", async (c) => {
         attendees[0];
 
       const isVisual =
-        clientVisualMode !== undefined
-          ? Boolean(clientVisualMode)
-          : /visual|watch|headed|live/i.test(lastMsg);
+        /visual|watch|headed|live/i.test(lastMsg) || Boolean(clientVisualMode);
 
       if (matchedAttendee && openEvents.length > 0) {
         // Start the runner!
