@@ -219,6 +219,30 @@ Also check out https://luma.com/defi-night for evening networking.`;
     return { extractedEvents: parsed.events.map((e) => e.title) };
   });
 
+  await runTest("Ingestion", "Document Parser: extraction of phone, name, and notes from document text", async () => {
+    const docText = `# Registrations & Leads
+Name: Aswin Vishal, Email: aswinvishal402@gmail.com, Phone: 9384514564, Message: Interested in partnership
+Name: Sarah Connor, Email: sconnor@sky.net, Phone: 555-019-2834, Message: Need consultation
+Target: https://mowli.in/`;
+    const buffer = Buffer.from(docText, "utf-8");
+    const parsed = await parseDocument(buffer, "contacts.md");
+
+    if (parsed.attendees.length !== 2) {
+      throw new Error(`Expected 2 attendees, got ${parsed.attendees.length}`);
+    }
+    const aswin = parsed.attendees.find((a) => a.email === "aswinvishal402@gmail.com");
+    if (!aswin || !aswin.phone || !aswin.pitch) {
+      throw new Error("Failed to extract phone or pitch/message for attendee");
+    }
+    if (parsed.events.length !== 1 || !parsed.events[0].url.includes("mowli.in")) {
+      throw new Error("Failed to extract target URL from document");
+    }
+    return {
+      attendees: parsed.attendees.map((a) => ({ name: a.name, phone: a.phone, message: a.pitch })),
+      targetUrl: parsed.events[0].url,
+    };
+  });
+
   await runTest("Ingestion", "XLSX Parser: extraction of binary spreadsheet sheets", async () => {
     const wb = XLSX.utils.book_new();
     const wsData = [
@@ -412,6 +436,19 @@ Also check out https://luma.com/defi-night for evening networking.`;
       throw new Error("Invalid status structure returned from /api/automation/status");
     }
     return data;
+  });
+
+  await runTest("API", "POST /api/automation/matrix: Multi-target matrix endpoint validation", async () => {
+    // Test validation
+    const invalidRes = await fetch(`${baseUrl}/api/automation/matrix`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targets: [], profiles: [] }),
+    });
+    if (invalidRes.status !== 400) {
+      throw new Error(`Expected HTTP 400 for empty payload, got ${invalidRes.status}`);
+    }
+    return { status: invalidRes.status, validation: "rejected_empty_matrix" };
   });
 
   // ----------------------------------------------------------------------

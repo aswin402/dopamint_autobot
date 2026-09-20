@@ -25,7 +25,7 @@ export interface ExtractedAttendee {
 }
 
 export interface ParseResult {
-  fileType: "spreadsheet" | "csv" | "docx" | "markdown" | "unknown";
+  fileType: "spreadsheet" | "csv" | "docx" | "markdown" | "pdf" | "unknown";
   rawText?: string;
   events: ExtractedEvent[];
   attendees: ExtractedAttendee[];
@@ -34,7 +34,7 @@ export interface ParseResult {
 
 /**
  * Universal Multi-Format Document Ingestion Engine
- * Ingests .xlsx, .xls, .csv, .docx, .md, and raw text
+ * Ingests .xlsx, .xls, .csv, .docx, .md, .pdf, and raw text
  */
 export async function parseDocument(
   buffer: Buffer,
@@ -43,6 +43,25 @@ export async function parseDocument(
   const ext = filename.split(".").pop()?.toLowerCase() || "";
   const events: ExtractedEvent[] = [];
   const attendees: ExtractedAttendee[] = [];
+
+  // Helper for unique URL tracking
+  const seenUrls = new Set<string>();
+  const addEventUrl = (rawUrl: string, title?: string) => {
+    const clean = rawUrl.replace(/[),;.'"]+$/, "").trim();
+    if (clean.startsWith("http") && !seenUrls.has(clean)) {
+      seenUrls.add(clean);
+      events.push({
+        id: events.length + 1,
+        title: title || `Target Form #${events.length + 1}`,
+        url: clean,
+        platform: clean.includes("luma.com")
+          ? "luma"
+          : clean.includes("google.com/forms")
+          ? "google_forms"
+          : "web_form",
+      });
+    }
+  };
 
   // 1. Spreadsheets (.xlsx, .xls)
   if (ext === "xlsx" || ext === "xls") {
@@ -58,13 +77,7 @@ export async function parseDocument(
       const date = row["Date"] || row["date"] || "";
 
       if (url && String(url).startsWith("http")) {
-        events.push({
-          id: idx + 1,
-          title: String(title).trim() || `Event #${idx + 1}`,
-          url: String(url).trim(),
-          date: String(date).trim(),
-          platform: String(url).includes("luma.com") ? "luma" : "external",
-        });
+        addEventUrl(String(url), String(title).trim() || `Event #${idx + 1}`);
       }
 
       // Look for attendee-like keys
@@ -74,9 +87,10 @@ export async function parseDocument(
         attendees.push({
           name: String(name || "Team Member").trim(),
           email: String(email).trim(),
-          phone: String(row["Phone"] || "").trim(),
-          company: String(row["Company"] || "OpenLedger").trim(),
-          role: String(row["Role"] || "Core Contributor").trim(),
+          phone: String(row["Phone"] || row["Mobile"] || row["number"] || "").trim(),
+          company: String(row["Company"] || row["Organization"] || "Celestialabs").trim(),
+          role: String(row["Role"] || row["Title"] || "Member").trim(),
+          pitch: String(row["Message"] || row["Notes"] || "").trim(),
           telegram: String(row["Telegram ID"] || row["Telegram"] || "").trim(),
           twitter: String(row["Twitter ID"] || row["Twitter"] || "").trim(),
           linkedin: String(row["LinkedIn"] || "").trim(),
@@ -88,7 +102,7 @@ export async function parseDocument(
       fileType: "spreadsheet",
       events,
       attendees,
-      summary: `Parsed spreadsheet ${filename}: extracted ${events.length} events and ${attendees.length} attendees across sheet '${firstSheetName}'.`,
+      summary: `Parsed spreadsheet ${filename}: extracted ${events.length} target URLs and ${attendees.length} people records across sheet '${firstSheetName}'.`,
     };
   }
 
@@ -103,16 +117,9 @@ export async function parseDocument(
     parsed.data.forEach((row, idx) => {
       const title = row["Event Name"] || row["Title"] || row["Event"] || row["title"] || "";
       const url = row["Event Link"] || row["Link"] || row["URL"] || row["url"] || "";
-      const date = row["Date"] || row["date"] || "";
 
       if (url && String(url).startsWith("http")) {
-        events.push({
-          id: idx + 1,
-          title: String(title).trim() || `Event #${idx + 1}`,
-          url: String(url).trim(),
-          date: String(date).trim(),
-          platform: String(url).includes("luma.com") ? "luma" : "external",
-        });
+        addEventUrl(String(url), String(title).trim() || `Event #${idx + 1}`);
       }
 
       const email = row["Email"] || row["email"];
@@ -120,9 +127,10 @@ export async function parseDocument(
         attendees.push({
           name: String(row["Name"] || "Team Member").trim(),
           email: String(email).trim(),
-          phone: String(row["Phone"] || "").trim(),
-          company: String(row["Company"] || "OpenLedger").trim(),
-          role: String(row["Role"] || "Core Contributor").trim(),
+          phone: String(row["Phone"] || row["Mobile"] || row["number"] || "").trim(),
+          company: String(row["Company"] || "Celestialabs").trim(),
+          role: String(row["Role"] || "Member").trim(),
+          pitch: String(row["Message"] || row["Notes"] || "").trim(),
           telegram: String(row["Telegram ID"] || row["Telegram"] || "").trim(),
           twitter: String(row["Twitter ID"] || row["Twitter"] || "").trim(),
         });
@@ -133,34 +141,125 @@ export async function parseDocument(
       fileType: "csv",
       events,
       attendees,
-      summary: `Parsed CSV ${filename}: found ${events.length} events and ${attendees.length} attendees.`,
+      summary: `Parsed CSV ${filename}: found ${events.length} target URLs and ${attendees.length} people records.`,
     };
   }
+
+function extractAttendeesFromText(text: string): ExtractedAttendee[] {
+  const attendees: ExtractedAttendee[] = [];
+  const seenEmails = new Set<string>();
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    const emailMatch = line.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+    if (emailMatch) {
+      const email = emailMatch[1].trim();
+      const emailLower = email.toLowerCase();
+      if (seenEmails.has(emailLower)) continue;
+      seenEmails.add(emailLower);
+
+      // Phone regex
+      const phoneMatch = line.match(
+        /(?:phone|tel|mobile|cell|contact)?\s*[:=]?\s*(\+?\d{1,3}[-.\s]?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{4}|\b\d{10}\b)/i
+      );
+      const phone = phoneMatch ? phoneMatch[1].trim() : undefined;
+
+      // Name extraction
+      let name = "";
+      const namePrefixMatch = line.match(
+        /(?:name|full\s*name|attendee|person|contact)\s*[:=]\s*([a-zA-Z\s.-]+?)(?:,|;|\n|\.|\bemail\b|\bphone\b|$)/i
+      );
+      if (namePrefixMatch && namePrefixMatch[1].trim()) {
+        name = namePrefixMatch[1].trim();
+      } else {
+        const tokens = line.split(/[,;\t|]/).map((t) => t.trim());
+        for (const token of tokens) {
+          if (
+            token &&
+            !token.includes("@") &&
+            !token.startsWith("http") &&
+            !/\d{5,}/.test(token) &&
+            token.length >= 2 &&
+            token.length <= 40
+          ) {
+            name = token;
+            break;
+          }
+        }
+      }
+      if (!name) {
+        name = email.split("@")[0].replace(/[._-]/g, " ");
+      }
+
+      // Message / Notes / Pitch extraction
+      let pitch = "";
+      const msgMatch = line.match(
+        /(?:message|msg|notes|note|pitch|inquiry|query)\s*[:=]\s*["']?([^"';]+)["']?/i
+      );
+      if (msgMatch && msgMatch[1].trim()) {
+        pitch = msgMatch[1].trim();
+      }
+
+      // Company extraction
+      let company = "Celestialabs";
+      const compMatch = line.match(/(?:company|org|organization|firm)\s*[:=]\s*([a-zA-Z0-9\s.-]+?)(?:,|;|\n|$)/i);
+      if (compMatch && compMatch[1].trim()) {
+        company = compMatch[1].trim();
+      }
+
+      // Role extraction
+      let role = "Member";
+      const roleMatch = line.match(/(?:role|title|position)\s*[:=]\s*([a-zA-Z0-9\s.-]+?)(?:,|;|\n|$)/i);
+      if (roleMatch && roleMatch[1].trim()) {
+        role = roleMatch[1].trim();
+      }
+
+      attendees.push({
+        name,
+        email,
+        phone,
+        company,
+        role,
+        pitch: pitch || undefined,
+      });
+    }
+  }
+
+  // Fallback for isolated emails if line scanning missed any
+  const fallbackEmails = text.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g) || [];
+  for (const em of fallbackEmails) {
+    const emLower = em.toLowerCase();
+    if (!seenEmails.has(emLower)) {
+      seenEmails.add(emLower);
+      attendees.push({
+        name: em.split("@")[0].replace(/[._-]/g, " "),
+        email: em,
+        company: "Celestialabs",
+        role: "Member",
+      });
+    }
+  }
+
+  return attendees;
+}
 
   // 3. Word Documents (.docx)
   if (ext === "docx") {
     const { value: text } = await mammoth.extractRawText({ buffer });
-    // Extract any URLs found in the text
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const urls = text.match(urlRegex) || [];
 
-    urls.forEach((u, i) => {
-      if (u.includes("luma.com") || u.includes("eventbrite") || u.includes("tickets.")) {
-        events.push({
-          id: i + 1,
-          title: `Document Event #${i + 1}`,
-          url: u.replace(/[),;.]+$/, ""),
-          platform: u.includes("luma.com") ? "luma" : "external",
-        });
-      }
-    });
+    // Extract any URLs found in the text
+    const urlRegex = /(https?:\/\/[^\s"'<>\)\]]+)/g;
+    const urls = text.match(urlRegex) || [];
+    urls.forEach((u, i) => addEventUrl(u, `Document Target #${i + 1}`));
+
+    const attendees = extractAttendeesFromText(text);
 
     return {
       fileType: "docx",
       rawText: text,
       events,
       attendees,
-      summary: `Parsed Word Document ${filename}: extracted ${text.length} characters and ${events.length} event links.`,
+      summary: `Parsed Word Document ${filename}: extracted ${events.length} target URLs and ${attendees.length} contact records.`,
     };
   }
 
@@ -169,36 +268,56 @@ export async function parseDocument(
     const content = buffer.toString("utf-8");
     const lines = content.split("\n");
 
-    lines.forEach((line, i) => {
-      // Look for markdown links [Title](https://...)
+    lines.forEach((line) => {
       const mdLinkMatch = line.match(/\[(.*?)\]\((https?:\/\/.*?)\)/);
       if (mdLinkMatch) {
-        events.push({
-          id: events.length + 1,
-          title: mdLinkMatch[1].trim(),
-          url: mdLinkMatch[2].trim(),
-          platform: mdLinkMatch[2].includes("luma.com") ? "luma" : "external",
-        });
+        addEventUrl(mdLinkMatch[2], mdLinkMatch[1]);
       } else {
-        // Fallback bare URL
-        const bareUrlMatch = line.match(/(https?:\/\/(?:luma\.com|eventbrite)[^\s]+)/);
+        const bareUrlMatch = line.match(/(https?:\/\/[^\s"'<>\)\]]+)/);
         if (bareUrlMatch) {
-          events.push({
-            id: events.length + 1,
-            title: `Markdown Event #${events.length + 1}`,
-            url: bareUrlMatch[1].trim(),
-            platform: "luma",
-          });
+          addEventUrl(bareUrlMatch[1]);
         }
       }
     });
+
+    const attendees = extractAttendeesFromText(content);
 
     return {
       fileType: "markdown",
       rawText: content,
       events,
       attendees,
-      summary: `Parsed Markdown/Text ${filename}: extracted ${events.length} event links.`,
+      summary: `Parsed Markdown/Text ${filename}: extracted ${events.length} target URLs and ${attendees.length} contact records.`,
+    };
+  }
+
+  // 5. PDF Documents (.pdf)
+  if (ext === "pdf") {
+    let pdfText = "";
+    try {
+      const { PDFParse } = require("pdf-parse");
+      const parser = new PDFParse({ data: buffer });
+      await parser.load();
+      const res = await parser.getText();
+      pdfText = res.text || "";
+      await parser.destroy();
+    } catch {
+      pdfText = buffer.toString("latin1");
+    }
+
+    // Extract all URLs
+    const urlRegex = /(https?:\/\/[^\s"'<>\)\]]+)/g;
+    const urls = pdfText.match(urlRegex) || [];
+    urls.forEach((u, i) => addEventUrl(u, `PDF Target #${i + 1}`));
+
+    const attendees = extractAttendeesFromText(pdfText);
+
+    return {
+      fileType: "pdf",
+      rawText: pdfText,
+      events,
+      attendees,
+      summary: `Parsed PDF Document ${filename}: extracted ${events.length} target URLs and ${attendees.length} contact records.`,
     };
   }
 

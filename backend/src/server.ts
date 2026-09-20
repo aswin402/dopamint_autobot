@@ -363,12 +363,12 @@ app.post("/api/chat", async (c) => {
       prisma.registration.count({ where: { status: "confirmed_success" } }),
     ]);
 
-    // Check if user provided a custom target URL for form automation
-    const customUrlMatch = lastMsg.match(/https?:\/\/[^\s"'<>]+/i);
-    const hasCustomUrl = customUrlMatch && !customUrlMatch[0].includes("google.com/spreadsheets");
+    // Check if user provided custom target URLs for form automation (1 or N URLs)
+    const allUrls = Array.from(lastMsg.matchAll(/https?:\/\/[^\s"'<>]+/gi))
+      .map((m: any) => (m[0] as string).replace(/[\.,\)]+$/, ""))
+      .filter((u) => !u.includes("google.com/spreadsheets"));
 
-    if (hasCustomUrl && /automate|fill|form|run|submit|register|send/i.test(lastMsg)) {
-      const targetUrl = customUrlMatch[0].replace(/[\.,\)]+$/, "");
+    if (allUrls.length > 0 && /automate|fill|form|run|submit|register|send/i.test(lastMsg)) {
       const isVisual = /visual|watch|headed|live/i.test(lastMsg) || Boolean(clientVisualMode);
 
       // Parse payload from user message or fallback to matched attendee
@@ -411,23 +411,52 @@ app.post("/api/chat", async (c) => {
         if (!customData.message) customData.message = "Hello, I am interested in connecting!";
       }
 
-      // Trigger custom form runner
-      automationRunner.runCustomForm(targetUrl, customData, {
-        headless: !isVisual,
-        preSubmitDelayMs: 1500,
-      });
+      if (allUrls.length > 1) {
+        // Multi-target batch matrix run
+        const targets = allUrls.map((u, i) => ({ url: u, title: `Target Form #${i + 1}` }));
+        automationRunner.runMatrixBatch(targets, [customData], {
+          headless: !isVisual,
+          pacingDelaySec: 8,
+          preSubmitDelayMs: 1500,
+        });
 
-      return c.json({
-        response: `🚀 **Autonomous Form Automation Launched!**\n\n- **Target URL:** [${targetUrl}](${targetUrl})\n- **Form Payload Extracted:**\n  - **Name:** \`${customData.name || "N/A"}\`\n  - **Email:** \`${customData.email || "N/A"}\`\n  - **Phone:** \`${customData.phone || "N/A"}\`\n  - **Message:** \`${customData.message || "N/A"}\`\n- **Browser Mode:** ${
-          isVisual
-            ? "👁️ **Visual Headed Browser Mode (Chromium On-Screen with 150ms slowMo)**"
-            : "⚡ Headless Non-Bot Stealth Mode"
-        }\n\n✨ The autonomous agent is now inspecting the target DOM, mapping fields with zero hardcoded selectors, and executing live submission. You can monitor the real-time KPIs and logs in the **Live Automation Monitor** on the right!`,
-        actionTaken: "launched_custom_form",
-        triggered: true,
-        targetUrl,
-        customData,
-      });
+        return c.json({
+          response: `🚀 **Multi-Target Matrix Automation Launched!**\n\n- **Target URLs Queued (${targets.length}):**\n${targets
+            .map((t) => `  - [${t.url}](${t.url})`)
+            .join("\n")}\n- **Profile Payload:**\n  - **Name:** \`${customData.name || "N/A"}\`\n  - **Email:** \`${
+            customData.email || "N/A"
+          }\`\n  - **Phone:** \`${customData.phone || "N/A"}\`\n  - **Message:** \`${customData.message || "N/A"}\`\n- **Browser Mode:** ${
+            isVisual
+              ? "👁️ **Visual Headed Browser Mode (Chromium On-Screen with 150ms slowMo)**"
+              : "⚡ Headless Non-Bot Stealth Mode"
+          }\n- **Anti-Bot Pacing:** 8s natural cadence between submissions.\n\n✨ The autonomous agent is iterating through all ${
+            targets.length
+          } forms, inspecting each DOM semantically, and submitting without hardcoded selectors. You can monitor live progress and logs in the **Live Automation Monitor** on the right!`,
+          actionTaken: "launched_matrix_batch",
+          triggered: true,
+          targets,
+          customData,
+        });
+      } else {
+        // Single target runner
+        const targetUrl = allUrls[0];
+        automationRunner.runCustomForm(targetUrl, customData, {
+          headless: !isVisual,
+          preSubmitDelayMs: 1500,
+        });
+
+        return c.json({
+          response: `🚀 **Autonomous Form Automation Launched!**\n\n- **Target URL:** [${targetUrl}](${targetUrl})\n- **Form Payload Extracted:**\n  - **Name:** \`${customData.name || "N/A"}\`\n  - **Email:** \`${customData.email || "N/A"}\`\n  - **Phone:** \`${customData.phone || "N/A"}\`\n  - **Message:** \`${customData.message || "N/A"}\`\n- **Browser Mode:** ${
+            isVisual
+              ? "👁️ **Visual Headed Browser Mode (Chromium On-Screen with 150ms slowMo)**"
+              : "⚡ Headless Non-Bot Stealth Mode"
+          }\n\n✨ The autonomous agent is now inspecting the target DOM, mapping fields with zero hardcoded selectors, and executing live submission. You can monitor the real-time KPIs and logs in the **Live Automation Monitor** on the right!`,
+          actionTaken: "launched_custom_form",
+          triggered: true,
+          targetUrl,
+          customData,
+        });
+      }
     }
 
     // Check if user specifically requested to start/launch/run registration
@@ -576,6 +605,8 @@ app.post("/api/upload", async (c) => {
       summary: parsed.summary,
       importedEvents: newEventsCount,
       importedAttendees: newAttendeesCount,
+      events: parsed.events,
+      attendees: parsed.attendees,
       rawTextSnippet: parsed.rawText ? parsed.rawText.slice(0, 300) : null,
     });
   } catch (err: any) {
@@ -673,6 +704,56 @@ app.post("/api/automation/custom", async (c) => {
     return c.json({
       success: true,
       message: `Universal form automation launched for ${url} [${isHeadless ? "Headless" : "Visual Headed Browser"}].`,
+      status: automationRunner.getStatus(),
+    });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+app.post("/api/automation/matrix", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { targets, profiles, options } = body;
+
+    if (!targets || !Array.isArray(targets) || targets.length === 0) {
+      return c.json({ error: "An array of target URLs is required." }, 400);
+    }
+    if (!profiles || !Array.isArray(profiles) || profiles.length === 0) {
+      return c.json({ error: "An array of attendee profiles is required." }, 400);
+    }
+
+    const normalizedTargets = targets
+      .map((t: any, idx: number) => {
+        if (typeof t === "string") return { url: t.trim(), title: `Target Form #${idx + 1}` };
+        return { url: (t.url || "").trim(), title: t.title || `Target Form #${idx + 1}` };
+      })
+      .filter((t: any) => t.url && t.url.startsWith("http"));
+
+    if (normalizedTargets.length === 0) {
+      return c.json({ error: "No valid URLs starting with http:// or https:// found in targets list." }, 400);
+    }
+
+    const opts = options || {};
+    const isHeadless = opts.headless !== undefined ? Boolean(opts.headless) : true;
+    const pairingMode = opts.pairingMode || "cartesian";
+    const totalTasks =
+      pairingMode === "pairwise"
+        ? Math.max(normalizedTargets.length, profiles.length)
+        : normalizedTargets.length * profiles.length;
+
+    // Launch matrix batch asynchronously in background
+    automationRunner.runMatrixBatch(normalizedTargets, profiles, opts);
+
+    return c.json({
+      success: true,
+      message: `Matrix batch automation launched: ${normalizedTargets.length} target forms × ${profiles.length} profiles = ${totalTasks} tasks queued [${
+        isHeadless ? "Headless Stealth" : "Visual Headed Browser"
+      }].`,
+      totalTasks,
+      pairingMode,
+      targetsCount: normalizedTargets.length,
+      profilesCount: profiles.length,
       status: automationRunner.getStatus(),
     });
   } catch (err: any) {

@@ -79,6 +79,8 @@ export async function POST(req: NextRequest) {
       summary: parsed.summary,
       importedEvents: newEventsCount,
       importedAttendees: newAttendeesCount,
+      events: parsed.events,
+      attendees: parsed.attendees,
       rawTextSnippet: parsed.rawText ? parsed.rawText.slice(0, 300) : null,
     });
   } catch (err: any) {

@@ -63,12 +63,12 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Check if user provided a custom target URL for form automation
-    const customUrlMatch = lastMsg.match(/https?:\/\/[^\s"'<>]+/i);
-    const hasCustomUrl = customUrlMatch && !customUrlMatch[0].includes("google.com/spreadsheets");
+    // Check if user provided custom target URLs for form automation (1 or N URLs)
+    const allUrls = Array.from(lastMsg.matchAll(/https?:\/\/[^\s"'<>]+/gi))
+      .map((m: any) => (m[0] as string).replace(/[\.,\)]+$/, ""))
+      .filter((u) => !u.includes("google.com/spreadsheets"));
 
-    if (hasCustomUrl && /automate|fill|form|run|submit|register|send/i.test(lastMsg)) {
-      const targetUrl = customUrlMatch[0].replace(/[\.,\)]+$/, "");
+    if (allUrls.length > 0 && /automate|fill|form|run|submit|register|send/i.test(lastMsg)) {
       const isVisual = /visual|watch|headed|live/i.test(lastMsg) || Boolean(body.isVisualMode);
 
       // Parse payload from user message
@@ -107,22 +107,51 @@ export async function POST(req: NextRequest) {
         if (!customData.message) customData.message = "Hello, I am interested in connecting!";
       }
 
-      automationRunner.runCustomForm(targetUrl, customData, {
-        headless: !isVisual,
-        preSubmitDelayMs: 1500,
-      });
+      if (allUrls.length > 1) {
+        // Multi-target batch matrix run
+        const targets = allUrls.map((u, i) => ({ url: u, title: `Target Form #${i + 1}` }));
+        automationRunner.runMatrixBatch(targets, [customData], {
+          headless: !isVisual,
+          pacingDelaySec: 8,
+          preSubmitDelayMs: 1500,
+        });
 
-      return NextResponse.json({
-        response: `🚀 **Autonomous Form Automation Launched!**\n\n- **Target URL:** [${targetUrl}](${targetUrl})\n- **Form Payload Extracted:**\n  - **Name:** \`${customData.name || "N/A"}\`\n  - **Email:** \`${customData.email || "N/A"}\`\n  - **Phone:** \`${customData.phone || "N/A"}\`\n  - **Message:** \`${customData.message || "N/A"}\`\n- **Browser Mode:** ${
-          isVisual
-            ? "👁️ **Visual Headed Browser Mode (Chromium On-Screen with 150ms slowMo)**"
-            : "⚡ Headless Non-Bot Stealth Mode"
-        }\n\n✨ The autonomous agent is now inspecting the target DOM, mapping fields with zero hardcoded selectors, and executing live submission. You can monitor the real-time KPIs and logs in the **Live Automation Monitor** on the right!`,
-        actionTaken: "launched_custom_form",
-        triggered: true,
-        targetUrl,
-        customData,
-      });
+        return NextResponse.json({
+          response: `🚀 **Multi-Target Matrix Automation Launched!**\n\n- **Target URLs Queued (${targets.length}):**\n${targets
+            .map((t) => `  - [${t.url}](${t.url})`)
+            .join("\n")}\n- **Profile Payload:**\n  - **Name:** \`${customData.name || "N/A"}\`\n  - **Email:** \`${
+            customData.email || "N/A"
+          }\`\n  - **Phone:** \`${customData.phone || "N/A"}\`\n  - **Message:** \`${customData.message || "N/A"}\`\n- **Browser Mode:** ${
+            isVisual
+              ? "👁️ **Visual Headed Browser Mode (Chromium On-Screen with 150ms slowMo)**"
+              : "⚡ Headless Non-Bot Stealth Mode"
+          }\n- **Anti-Bot Pacing:** 8s natural cadence between submissions.\n\n✨ The autonomous agent is iterating through all ${
+            targets.length
+          } forms, inspecting each DOM semantically, and submitting without hardcoded selectors. You can monitor live progress and logs in the **Live Automation Monitor** on the right!`,
+          actionTaken: "launched_matrix_batch",
+          triggered: true,
+          targets,
+          customData,
+        });
+      } else {
+        const targetUrl = allUrls[0];
+        automationRunner.runCustomForm(targetUrl, customData, {
+          headless: !isVisual,
+          preSubmitDelayMs: 1500,
+        });
+
+        return NextResponse.json({
+          response: `🚀 **Autonomous Form Automation Launched!**\n\n- **Target URL:** [${targetUrl}](${targetUrl})\n- **Form Payload Extracted:**\n  - **Name:** \`${customData.name || "N/A"}\`\n  - **Email:** \`${customData.email || "N/A"}\`\n  - **Phone:** \`${customData.phone || "N/A"}\`\n  - **Message:** \`${customData.message || "N/A"}\`\n- **Browser Mode:** ${
+            isVisual
+              ? "👁️ **Visual Headed Browser Mode (Chromium On-Screen with 150ms slowMo)**"
+              : "⚡ Headless Non-Bot Stealth Mode"
+          }\n\n✨ The autonomous agent is now inspecting the target DOM, mapping fields with zero hardcoded selectors, and executing live submission. You can monitor the real-time KPIs and logs in the **Live Automation Monitor** on the right!`,
+          actionTaken: "launched_custom_form",
+          triggered: true,
+          targetUrl,
+          customData,
+        });
+      }
     }
 
     // Handle automation trigger commands directly
