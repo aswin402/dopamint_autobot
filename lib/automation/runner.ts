@@ -34,6 +34,7 @@ export interface RunnerLog {
 class AutomationRunner {
   private isRunning: boolean = false;
   private isPaused: boolean = false;
+  private isHeadless: boolean = true;
   private logs: RunnerLog[] = [];
   private activeJobId: string | null = null;
   private listeners: ((log: RunnerLog) => void)[] = [];
@@ -42,6 +43,7 @@ class AutomationRunner {
     return {
       isRunning: this.isRunning,
       isPaused: this.isPaused,
+      isHeadless: this.isHeadless,
       activeJobId: this.activeJobId,
       recentLogs: this.logs.slice(-50),
     };
@@ -85,7 +87,8 @@ class AutomationRunner {
   public async startBatch(
     eventIds: number[],
     attendeeIds: string[],
-    pacing: PacingConfig = DEFAULT_PACING
+    pacing: PacingConfig = DEFAULT_PACING,
+    options: { headless?: boolean } = {}
   ) {
     if (this.isRunning) {
       this.log("Runner is already active!", "warn");
@@ -94,8 +97,13 @@ class AutomationRunner {
 
     this.isRunning = true;
     this.isPaused = false;
+    this.isHeadless = options.headless !== undefined ? Boolean(options.headless) : true;
     this.activeJobId = `job_${Date.now()}`;
-    this.log(`🚀 Starting batch registration: ${eventIds.length} events across ${attendeeIds.length} team members.`);
+    this.log(
+      `🚀 Starting batch registration: ${eventIds.length} events across ${attendeeIds.length} team members [${
+        this.isHeadless ? "Headless Mode" : "👁️ Visual Headed Browser Mode (slowMo: 150ms)"
+      }].`
+    );
 
     const profileDir = process.env.BROWSER_PROFILE_PATH
       ? path.resolve(process.env.BROWSER_PROFILE_PATH)
@@ -108,10 +116,25 @@ class AutomationRunner {
     let consecutiveSuccesses = 0;
 
     try {
-      context = await chromium.launchPersistentContext(profileDir, {
-        headless: true,
-        viewport: { width: 1280, height: 800 },
-      });
+      try {
+        context = await chromium.launchPersistentContext(profileDir, {
+          headless: this.isHeadless,
+          slowMo: this.isHeadless ? 0 : 150,
+          viewport: { width: 1280, height: 800 },
+        });
+      } catch (launchErr: any) {
+        if (!this.isHeadless) {
+          this.log(`⚠️ Failed to launch in headed visual mode (${launchErr.message}). Falling back to headless...`, "warn");
+          this.isHeadless = true;
+          context = await chromium.launchPersistentContext(profileDir, {
+            headless: true,
+            slowMo: 0,
+            viewport: { width: 1280, height: 800 },
+          });
+        } else {
+          throw launchErr;
+        }
+      }
 
       const page = await context.newPage();
 

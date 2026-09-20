@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Sparkles, RefreshCw, ExternalLink, Activity, User, CheckCircle2 } from "lucide-react";
+import { Sparkles, RefreshCw, ExternalLink, Activity, User, CheckCircle2, Eye, EyeOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -12,7 +12,10 @@ interface HeaderProps {
   runnerStatus: {
     isRunning: boolean;
     isPaused: boolean;
+    isHeadless?: boolean;
   };
+  isVisualMode?: boolean;
+  onToggleVisualMode?: () => void;
   onSyncSheets: () => void;
   isSyncingSheets: boolean;
 }
@@ -22,6 +25,8 @@ export default function Header({
   subtitle,
   selectedAttendeeName,
   runnerStatus,
+  isVisualMode = false,
+  onToggleVisualMode,
   onSyncSheets,
   isSyncingSheets,
 }: HeaderProps) {
@@ -33,8 +38,15 @@ export default function Header({
           <h1 className="text-sm md:text-base font-bold tracking-tight text-foreground flex items-center gap-2">
             <span>{activeTitle}</span>
             {runnerStatus.isRunning && (
-              <Badge variant="success" className="animate-pulse">
-                {runnerStatus.isPaused ? "Paused" : "Runner Active"}
+              <Badge
+                variant={runnerStatus.isHeadless === false ? "warning" : "success"}
+                className="animate-pulse gap-1"
+              >
+                {runnerStatus.isPaused
+                  ? "Paused"
+                  : runnerStatus.isHeadless === false
+                  ? "👁️ Watching Live"
+                  : "Runner Active"}
               </Badge>
             )}
           </h1>
@@ -64,6 +76,42 @@ export default function Header({
           <Sparkles className="w-3.5 h-3.5" />
           <span>MiniMax M2.5</span>
         </div>
+
+        {/* Watch Live Visual Browser Mode Switch */}
+        {onToggleVisualMode && (
+          <button
+            type="button"
+            onClick={onToggleVisualMode}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-semibold transition-all cursor-pointer ${
+              isVisualMode
+                ? "bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300 shadow-2xs"
+                : "bg-card border-border text-muted-foreground hover:text-foreground hover:bg-muted/60"
+            }`}
+            title={
+              isVisualMode
+                ? "Visual Browser ON: Chromium window opens on your screen so you can watch form interactions in real time."
+                : "Visual Browser OFF: Runs silently in the background (headless)."
+            }
+          >
+            {isVisualMode ? (
+              <>
+                <Eye className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 animate-pulse" />
+                <span>Watch Live</span>
+                <span className="text-[10px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold uppercase">
+                  ON
+                </span>
+              </>
+            ) : (
+              <>
+                <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                <span>Watch Live</span>
+                <span className="text-[10px] px-1 py-0.2 rounded bg-muted text-muted-foreground font-medium uppercase">
+                  OFF
+                </span>
+              </>
+            )}
+          </button>
+        )}
 
         {/* Google Sheets Sync Button */}
         <Button

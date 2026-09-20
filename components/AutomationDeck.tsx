@@ -18,6 +18,8 @@ import {
   ShieldCheck,
   Coffee,
   Check,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -67,8 +69,11 @@ interface AutomationDeckProps {
   runnerStatus: {
     isRunning: boolean;
     isPaused: boolean;
+    isHeadless?: boolean;
     recentLogs: RunnerLog[];
   };
+  isVisualMode?: boolean;
+  onToggleVisualMode?: () => void;
   activeDeckTab: "matrix" | "logs" | "nonsubmitted";
   setActiveDeckTab: (tab: "matrix" | "logs" | "nonsubmitted") => void;
   onStartAutomation: (selectedEventIds?: number[]) => void;
@@ -85,6 +90,8 @@ export default function AutomationDeck({
   events,
   metrics,
   runnerStatus,
+  isVisualMode = false,
+  onToggleVisualMode,
   activeDeckTab,
   setActiveDeckTab,
   onStartAutomation,
@@ -237,12 +244,20 @@ export default function AutomationDeck({
               {runnerStatus.isRunning
                 ? runnerStatus.isPaused
                   ? "Paused"
+                  : runnerStatus.isHeadless === false
+                  ? "👁️ Watching Live"
                   : "Active Batch"
-                : "Standby"}
+                : isVisualMode
+                ? "Standby (Visual)"
+                : "Standby (Headless)"}
             </p>
           </div>
           <div className="w-9 h-9 rounded-xl bg-muted text-muted-foreground flex items-center justify-center">
-            <Coffee className="w-4 h-4" />
+            {runnerStatus.isHeadless === false || (isVisualMode && !runnerStatus.isRunning) ? (
+              <Eye className="w-4 h-4 text-amber-500" />
+            ) : (
+              <Coffee className="w-4 h-4" />
+            )}
           </div>
         </div>
       </div>
@@ -290,6 +305,35 @@ export default function AutomationDeck({
 
         {/* Runner Action Controls */}
         <div className="flex items-center gap-2">
+          {onToggleVisualMode && (
+            <button
+              type="button"
+              onClick={onToggleVisualMode}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-2xl border text-xs font-semibold transition-all cursor-pointer ${
+                isVisualMode
+                  ? "bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300 shadow-2xs"
+                  : "bg-card border-border text-muted-foreground hover:text-foreground hover:bg-muted/40"
+              }`}
+              title={
+                isVisualMode
+                  ? "Visual Mode ON: Interactive Chromium window opens on your desktop"
+                  : "Visual Mode OFF: Silent background headless execution"
+              }
+            >
+              {isVisualMode ? (
+                <>
+                  <Eye className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 animate-pulse" />
+                  <span>Watch Live: ON</span>
+                </>
+              ) : (
+                <>
+                  <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span>Watch Live: OFF</span>
+                </>
+              )}
+            </button>
+          )}
+
           {!runnerStatus.isRunning ? (
             <Button
               onClick={() => onStartAutomation(selectedEvents.length > 0 ? selectedEvents : undefined)}
@@ -567,15 +611,42 @@ export default function AutomationDeck({
         {/* TAB 3: LIVE TERMINAL LOGS */}
         {activeDeckTab === "logs" && (
           <div className="space-y-3 max-w-5xl mx-auto">
+            {isVisualMode && (
+              <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between text-xs text-foreground">
+                <div className="flex items-center gap-2.5">
+                  <Eye className="w-4 h-4 text-amber-600 dark:text-amber-400 animate-pulse shrink-0" />
+                  <div>
+                    <span className="font-semibold text-amber-800 dark:text-amber-300">
+                      Visual Headed Browser Mode Active:
+                    </span>{" "}
+                    <span className="text-muted-foreground">
+                      An interactive Chromium window will open directly on your desktop with 150ms slowMo pacing so you can watch forms fill in real-time.
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="rounded-3xl border border-border bg-card overflow-hidden shadow-2xs">
               <div className="p-3 border-b border-border bg-muted/40 flex items-center justify-between text-xs font-semibold text-foreground">
                 <div className="flex items-center gap-2">
                   <Terminal className="w-4 h-4 text-primary" />
                   <span>Real-Time Playwright & MiniMax Execution Stream</span>
                 </div>
-                <Badge variant={runnerStatus.isRunning ? "success" : "secondary"}>
-                  {runnerStatus.isRunning ? "STREAMING" : "IDLE"}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge variant={runnerStatus.isHeadless === false ? "warning" : "secondary"} className="gap-1">
+                    {runnerStatus.isHeadless === false ? (
+                      <>
+                        <Eye className="w-2.5 h-2.5 text-amber-500 animate-pulse" />
+                        <span>Visual Window</span>
+                      </>
+                    ) : (
+                      "Headless"
+                    )}
+                  </Badge>
+                  <Badge variant={runnerStatus.isRunning ? "success" : "secondary"}>
+                    {runnerStatus.isRunning ? "STREAMING" : "IDLE"}
+                  </Badge>
+                </div>
               </div>
 
               <div className="p-4 font-mono text-xs max-h-[520px] overflow-y-auto space-y-2 bg-background/50">

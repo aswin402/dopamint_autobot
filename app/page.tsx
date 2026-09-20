@@ -28,12 +28,35 @@ export default function Home() {
   const [runnerStatus, setRunnerStatus] = useState<{
     isRunning: boolean;
     isPaused: boolean;
+    isHeadless?: boolean;
     recentLogs: any[];
   }>({
     isRunning: false,
     isPaused: false,
+    isHeadless: true,
     recentLogs: [],
   });
+
+  const [isVisualMode, setIsVisualMode] = useState<boolean>(false);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("autobot_visual_mode");
+      if (saved !== null) {
+        setIsVisualMode(saved === "true");
+      }
+    } catch {}
+  }, []);
+
+  const toggleVisualMode = () => {
+    setIsVisualMode((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("autobot_visual_mode", String(next));
+      } catch {}
+      return next;
+    });
+  };
 
   const [recentRegistrations, setRecentRegistrations] = useState<any[]>([]);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
@@ -141,7 +164,9 @@ export default function Home() {
 
   const handleStartAutomation = async (eventIds?: number[]) => {
     try {
-      const payload: any = {};
+      const payload: any = {
+        headless: !isVisualMode,
+      };
       if (eventIds && eventIds.length > 0) {
         payload.eventIds = eventIds;
       }
@@ -240,6 +265,8 @@ export default function Home() {
           subtitle="Dopamint Autonomous Form Engine • MiniMax M2.5 Grounded"
           selectedAttendeeName={selectedAttendee?.name}
           runnerStatus={runnerStatus}
+          isVisualMode={isVisualMode}
+          onToggleVisualMode={toggleVisualMode}
           onSyncSheets={handleSyncSheets}
           isSyncingSheets={isSyncingSheets}
         />
@@ -267,6 +294,8 @@ export default function Home() {
               events={events}
               metrics={metrics}
               runnerStatus={runnerStatus}
+              isVisualMode={isVisualMode}
+              onToggleVisualMode={toggleVisualMode}
               activeDeckTab={activeDeckTab}
               setActiveDeckTab={setActiveDeckTab}
               onStartAutomation={handleStartAutomation}

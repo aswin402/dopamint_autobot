@@ -244,7 +244,7 @@ app.post("/api/upload", async (c) => {
 app.post("/api/automation/start", async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    let { eventIds, attendeeIds, pacing } = body;
+    let { eventIds, attendeeIds, pacing, headless } = body;
 
     if (!attendeeIds || attendeeIds.length === 0) {
       const attendees = await prisma.attendee.findMany({ select: { id: true } });
@@ -260,11 +260,16 @@ app.post("/api/automation/start", async (c) => {
       eventIds = events.map((e) => e.id);
     }
 
-    automationRunner.startBatch(eventIds, attendeeIds, pacing || DEFAULT_PACING);
+    const isHeadless = headless !== undefined ? Boolean(headless) : true;
+    automationRunner.startBatch(eventIds, attendeeIds, pacing || DEFAULT_PACING, {
+      headless: isHeadless,
+    });
 
     return c.json({
       success: true,
-      message: `Batch runner started for ${eventIds.length} events across ${attendeeIds.length} attendees.`,
+      message: `Batch runner started for ${eventIds.length} events across ${attendeeIds.length} attendees [${
+        isHeadless ? "Headless" : "Visual Headed Browser"
+      }].`,
       status: automationRunner.getStatus(),
     });
   } catch (err: any) {
