@@ -363,6 +363,73 @@ app.post("/api/chat", async (c) => {
       prisma.registration.count({ where: { status: "confirmed_success" } }),
     ]);
 
+    // Check if user provided a custom target URL for form automation
+    const customUrlMatch = lastMsg.match(/https?:\/\/[^\s"'<>]+/i);
+    const hasCustomUrl = customUrlMatch && !customUrlMatch[0].includes("google.com/spreadsheets");
+
+    if (hasCustomUrl && /automate|fill|form|run|submit|register|send/i.test(lastMsg)) {
+      const targetUrl = customUrlMatch[0].replace(/[\.,\)]+$/, "");
+      const isVisual = /visual|watch|headed|live/i.test(lastMsg) || Boolean(clientVisualMode);
+
+      // Parse payload from user message or fallback to matched attendee
+      const customData: Record<string, any> = {};
+
+      // Name extract
+      const nameMatch = lastMsg.match(/(?:name|my name is|for)\s*[:=]?\s*([a-zA-Z\s]+?)(?:,|;|\n|\.|\bemail\b|\bphone\b|\bmessage\b|$)/i);
+      if (nameMatch && nameMatch[1].trim() && !/http|fill|form/i.test(nameMatch[1])) {
+        customData.name = nameMatch[1].trim();
+      }
+
+      // Email extract
+      const emailMatch = lastMsg.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+      if (emailMatch) {
+        customData.email = emailMatch[1].trim();
+      }
+
+      // Phone extract
+      const phoneMatch = lastMsg.match(/(?:phone|number|mobile|tel)\s*[:=]?\s*([+0-9\s-]{8,15})/i) || lastMsg.match(/\b([0-9]{10})\b/);
+      if (phoneMatch) {
+        customData.phone = phoneMatch[1].trim();
+      }
+
+      // Message extract
+      const msgMatch = lastMsg.match(/(?:message|msg|notes|query|pitch|body)\s*[:=]?\s*["']?([^"'\n,;]+)["']?/i);
+      if (msgMatch) {
+        customData.message = msgMatch[1].trim();
+      }
+
+      // If fields are missing, merge from default or matched attendee
+      const matchedAttendee =
+        attendees.find((a) => (customData.email && a.email === customData.email) || (customData.name && a.name.toLowerCase().includes(customData.name.toLowerCase()))) ||
+        attendees.find((a) => a.email === "aswinvishal402@gmail.com") ||
+        attendees[0];
+
+      if (matchedAttendee) {
+        if (!customData.name) customData.name = matchedAttendee.name;
+        if (!customData.email) customData.email = matchedAttendee.email;
+        if (!customData.phone && (matchedAttendee as any).phone) customData.phone = (matchedAttendee as any).phone;
+        if (!customData.message) customData.message = "Hello, I am interested in connecting!";
+      }
+
+      // Trigger custom form runner
+      automationRunner.runCustomForm(targetUrl, customData, {
+        headless: !isVisual,
+        preSubmitDelayMs: 1500,
+      });
+
+      return c.json({
+        response: `🚀 **Autonomous Form Automation Launched!**\n\n- **Target URL:** [${targetUrl}](${targetUrl})\n- **Form Payload Extracted:**\n  - **Name:** \`${customData.name || "N/A"}\`\n  - **Email:** \`${customData.email || "N/A"}\`\n  - **Phone:** \`${customData.phone || "N/A"}\`\n  - **Message:** \`${customData.message || "N/A"}\`\n- **Browser Mode:** ${
+          isVisual
+            ? "👁️ **Visual Headed Browser Mode (Chromium On-Screen with 150ms slowMo)**"
+            : "⚡ Headless Non-Bot Stealth Mode"
+        }\n\n✨ The autonomous agent is now inspecting the target DOM, mapping fields with zero hardcoded selectors, and executing live submission. You can monitor the real-time KPIs and logs in the **Live Automation Monitor** on the right!`,
+        actionTaken: "launched_custom_form",
+        triggered: true,
+        targetUrl,
+        customData,
+      });
+    }
+
     // Check if user specifically requested to start/launch/run registration
     const isTriggerRequest =
       /start|launch|register|run batch|begin registration|automate|fill form/i.test(lastMsg) &&
@@ -585,6 +652,48 @@ app.post("/api/automation/stop", (c) => {
     message: "Automation runner stopped",
     status: automationRunner.getStatus(),
   });
+});
+
+app.post("/api/automation/custom", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { url, data, headless, slowMo, preSubmitDelayMs } = body;
+
+    if (!url || typeof url !== "string" || !url.startsWith("http")) {
+      return c.json({ error: "A valid target URL starting with http:// or https:// is required." }, 400);
+    }
+
+    const isHeadless = headless !== undefined ? Boolean(headless) : true;
+    automationRunner.runCustomForm(url, data || {}, {
+      headless: isHeadless,
+      slowMo: slowMo ? Number(slowMo) : undefined,
+      preSubmitDelayMs: preSubmitDelayMs ? Number(preSubmitDelayMs) : undefined,
+    });
+
+    return c.json({
+      success: true,
+      message: `Universal form automation launched for ${url} [${isHeadless ? "Headless" : "Visual Headed Browser"}].`,
+      status: automationRunner.getStatus(),
+    });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+app.post("/api/automation/inspect", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { url } = body;
+
+    if (!url || typeof url !== "string" || !url.startsWith("http")) {
+      return c.json({ error: "A valid target URL starting with http:// or https:// is required." }, 400);
+    }
+
+    const result = await automationRunner.inspectFormFields(url);
+    return c.json(result);
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
 });
 
 // --------------------------------------------------------------------------

@@ -56,6 +56,11 @@ interface ChatGPTViewProps {
 
 const PROMPT_SUGGESTIONS = [
   {
+    title: "Universal Form Automation",
+    desc: "Automate contact form at https://mowli.in/ with custom details",
+    prompt: "Automate form at https://mowli.in/ with name: aswin, email: aswinvishal402@gmail.com, phone: 9384514564, message: hii in visual mode",
+  },
+  {
     title: "Live Batch Registration",
     desc: "Register Aswin Vishal for upcoming side events and watch live",
     prompt: "Start batch registration for Aswin Vishal across the upcoming open events in visual browser mode.",

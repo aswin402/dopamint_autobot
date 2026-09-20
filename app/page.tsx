@@ -8,6 +8,7 @@ import AutomationDeck from "@/components/AutomationDeck";
 import { ChatGPTView } from "@/components/ChatGPTView";
 import { TeamRoster } from "@/components/TeamRoster";
 import { SheetsSyncView } from "@/components/SheetsSyncView";
+import { UniversalFormStudio } from "@/components/UniversalFormStudio";
 import ExportModal from "@/components/ExportModal";
 
 export default function Home() {
@@ -316,6 +317,17 @@ export default function Home() {
               isLoadingEvents={isLoadingEvents}
               selectedAttendeeId={selectedAttendeeId}
               onOpenExport={openExportModal}
+            />
+          )}
+
+          {activeTab === "form_runner" && (
+            <UniversalFormStudio
+              attendees={attendees}
+              isVisualMode={isVisualMode}
+              onToggleVisualMode={toggleVisualMode}
+              onLaunchSuccess={() => {
+                // Poll/refresh status
+              }}
             />
           )}
 

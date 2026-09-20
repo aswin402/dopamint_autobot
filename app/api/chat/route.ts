@@ -63,6 +63,68 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    // Check if user provided a custom target URL for form automation
+    const customUrlMatch = lastMsg.match(/https?:\/\/[^\s"'<>]+/i);
+    const hasCustomUrl = customUrlMatch && !customUrlMatch[0].includes("google.com/spreadsheets");
+
+    if (hasCustomUrl && /automate|fill|form|run|submit|register|send/i.test(lastMsg)) {
+      const targetUrl = customUrlMatch[0].replace(/[\.,\)]+$/, "");
+      const isVisual = /visual|watch|headed|live/i.test(lastMsg) || Boolean(body.isVisualMode);
+
+      // Parse payload from user message
+      const customData: Record<string, any> = {};
+
+      const nameMatch = lastMsg.match(/(?:name|my name is|for)\s*[:=]?\s*([a-zA-Z\s]+?)(?:,|;|\n|\.|\bemail\b|\bphone\b|\bmessage\b|$)/i);
+      if (nameMatch && nameMatch[1].trim() && !/http|fill|form/i.test(nameMatch[1])) {
+        customData.name = nameMatch[1].trim();
+      }
+
+      const emailMatch = lastMsg.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+      if (emailMatch) {
+        customData.email = emailMatch[1].trim();
+      }
+
+      const phoneMatch = lastMsg.match(/(?:phone|number|mobile|tel)\s*[:=]?\s*([+0-9\s-]{8,15})/i) || lastMsg.match(/\b([0-9]{10})\b/);
+      if (phoneMatch) {
+        customData.phone = phoneMatch[1].trim();
+      }
+
+      const msgMatch = lastMsg.match(/(?:message|msg|notes|query|pitch|body)\s*[:=]?\s*["']?([^"'\n,;]+)["']?/i);
+      if (msgMatch) {
+        customData.message = msgMatch[1].trim();
+      }
+
+      const attendees = await prisma.attendee.findMany();
+      const matchedAttendee =
+        attendees.find((a) => (customData.email && a.email === customData.email) || (customData.name && a.name.toLowerCase().includes(customData.name.toLowerCase()))) ||
+        attendees.find((a) => a.email === "aswinvishal402@gmail.com") ||
+        attendees[0];
+
+      if (matchedAttendee) {
+        if (!customData.name) customData.name = matchedAttendee.name;
+        if (!customData.email) customData.email = matchedAttendee.email;
+        if (!customData.phone && (matchedAttendee as any).phone) customData.phone = (matchedAttendee as any).phone;
+        if (!customData.message) customData.message = "Hello, I am interested in connecting!";
+      }
+
+      automationRunner.runCustomForm(targetUrl, customData, {
+        headless: !isVisual,
+        preSubmitDelayMs: 1500,
+      });
+
+      return NextResponse.json({
+        response: `🚀 **Autonomous Form Automation Launched!**\n\n- **Target URL:** [${targetUrl}](${targetUrl})\n- **Form Payload Extracted:**\n  - **Name:** \`${customData.name || "N/A"}\`\n  - **Email:** \`${customData.email || "N/A"}\`\n  - **Phone:** \`${customData.phone || "N/A"}\`\n  - **Message:** \`${customData.message || "N/A"}\`\n- **Browser Mode:** ${
+          isVisual
+            ? "👁️ **Visual Headed Browser Mode (Chromium On-Screen with 150ms slowMo)**"
+            : "⚡ Headless Non-Bot Stealth Mode"
+        }\n\n✨ The autonomous agent is now inspecting the target DOM, mapping fields with zero hardcoded selectors, and executing live submission. You can monitor the real-time KPIs and logs in the **Live Automation Monitor** on the right!`,
+        actionTaken: "launched_custom_form",
+        triggered: true,
+        targetUrl,
+        customData,
+      });
+    }
+
     // Handle automation trigger commands directly
     if (
       /start|launch|register|run batch|run automation|begin/i.test(lastMsg) &&

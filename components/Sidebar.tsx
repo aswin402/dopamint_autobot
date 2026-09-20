@@ -15,11 +15,12 @@ import {
   Activity,
   Plus,
   Sparkles,
+  Globe,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Badge } from "@/components/ui/badge";
 
-export type NavTab = "dashboard" | "automations" | "chat" | "team" | "sheets";
+export type NavTab = "dashboard" | "automations" | "form_runner" | "chat" | "team" | "sheets";
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -50,6 +51,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: "Automations",
       icon: <Zap className="w-5 h-5 flex-shrink-0" />,
       badge: activeJobRunning ? "LIVE" : undefined,
+    },
+    {
+      id: "form_runner",
+      label: "Form Studio",
+      icon: <Globe className="w-5 h-5 flex-shrink-0" />,
     },
     {
       id: "chat",
