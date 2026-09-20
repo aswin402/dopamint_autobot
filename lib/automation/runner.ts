@@ -249,13 +249,9 @@ class AutomationRunner {
               }
 
               const afterText = await page.locator("body").innerText();
-              const verified =
-                isConfirmed ||
-                /Registered|Application Submitted|Approval Pending|Waitlist Joined|Going|Manage Registration/i.test(
-                  afterText
-                );
-
-              const status = verified ? "confirmed_success" : "waitlist_joined";
+              const isWaitlisted = /Application Submitted|Approval Pending|Waitlist Joined|Under Review|Applied/i.test(afterText);
+              const isDirectSuccess = isConfirmed || /Registered|Going|Manage Registration|Your ticket|You're in/i.test(afterText);
+              const status = isDirectSuccess && !isWaitlisted ? "confirmed_success" : isWaitlisted ? "waitlist_joined" : "submitted";
               await prisma.registration.upsert({
                 where: {
                   eventId_attendeeId: { eventId: ev.id, attendeeId: person.id },
@@ -324,10 +320,18 @@ class AutomationRunner {
       )
       .all();
 
-    let wallets: Record<string, string> = {};
-    try {
-      wallets = person.wallets ? JSON.parse(person.wallets) : {};
-    } catch (e) {}
+    let walletAddress = "";
+    if (person.wallets) {
+      try {
+        const parsed = JSON.parse(person.wallets);
+        walletAddress = parsed.evm || parsed.eth || parsed.sol || parsed.address || "";
+      } catch {
+        walletAddress = person.wallets;
+      }
+    }
+    if (!walletAddress) {
+      walletAddress = process.env.DEFAULT_FALLBACK_WALLET || "";
+    }
 
     for (const inp of inputs) {
       if (!(await inp.isVisible())) continue;
@@ -377,30 +381,43 @@ class AutomationRunner {
       } else if (/phone|mobile|전화|연락처/i.test(combined)) {
         await inp.fill(person.phone || process.env.DEFAULT_FALLBACK_PHONE || "");
       } else if (/company\s*website|project\s*website|website|url|홈페이지/i.test(combined)) {
-        await inp.fill(person.website || process.env.DEFAULT_FALLBACK_WEBSITE || "https://openledger.xyz");
+        await inp.fill(person.website || process.env.DEFAULT_FALLBACK_WEBSITE || "https://dopamint.xyz");
       } else if (/telegram|텔레그램|\btg\b/i.test(combined)) {
         await inp.fill(person.telegram || process.env.DEFAULT_FALLBACK_TELEGRAM || "");
       } else if (/twitter|트위터|\bx handle\b|\bx profile\b|\bx username\b/i.test(combined)) {
         await inp.fill(person.twitter || process.env.DEFAULT_FALLBACK_TWITTER || "");
       } else if (/linkedin|링크드인/i.test(combined)) {
         await inp.fill(person.linkedin || "");
-      } else if (/eth|evm|지갑|wallet/i.test(combined)) {
-        await inp.fill(wallets.evm || process.env.DEFAULT_FALLBACK_WALLET || "");
+      } else if (/eth|evm|지갑|wallet|solana|sol\b/i.test(combined)) {
+        await inp.fill(walletAddress);
       } else if (/company|project|소속|회사|organization|firm/i.test(combined)) {
         await inp.fill(person.company);
       } else if (/role|title|직함|position|job/i.test(combined)) {
         await inp.fill(person.role);
       } else if (/country|based|국가|where.*based/i.test(combined)) {
-        await inp.fill("South Korea");
+        await inp.fill(person.country || "South Korea");
       } else if (/who invited|초대|추천인|how\s*did\s*you\s*hear/i.test(combined)) {
-        await inp.fill("KBW Host / Ecosystem Partner");
+        await inp.fill("Dopamint / Ecosystem Partner");
       } else if (/dietary|allergy|음식|식사/i.test(combined)) {
         await inp.fill("None (없음)");
       } else if (/pitch|building|describe\s*yourself|소개/i.test(combined)) {
-        await inp.fill(person.pitch || "Building verifiable AI and data infrastructure.");
+        await inp.fill(person.pitch || "Building autonomous AI agent platforms and decentralized data compute.");
       }
 
       await page.waitForTimeout(pacing.fieldDelayMs);
+    }
+
+    // HTML Dropdowns (<select>)
+    const selects = await page.locator("form select").all();
+    for (const sel of selects) {
+      try {
+        if (!(await sel.isVisible())) continue;
+        const optionCount = await sel.locator("option").count();
+        if (optionCount > 1) {
+          await sel.selectOption({ index: 1 });
+          await page.waitForTimeout(150);
+        }
+      } catch (e) {}
     }
 
     // Checkboxes / Consent waivers

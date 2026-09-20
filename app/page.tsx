@@ -44,13 +44,15 @@ export default function Home() {
   // Check Hono backend health
   const checkHonoHealth = async () => {
     try {
-      const res = await fetch("http://localhost:4000/health", {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
+      const res = await fetch(`${backendUrl}/health`, {
         cache: "no-store",
       }).catch(() => null);
+
       if (res && res.ok) {
         setHonoStatus("online");
       } else {
-        // Test proxy
+        // Test Next.js transparent proxy
         const proxyRes = await fetch("/api/automation/status", {
           cache: "no-store",
         }).catch(() => null);

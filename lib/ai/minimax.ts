@@ -44,9 +44,11 @@ export async function streamAgentChat(
   if (!apiKey || apiKey === "dummy_key_for_initialization") {
     // Graceful offline mock response guiding user to configure MiniMax
     const lastUserMsg = messages[messages.length - 1]?.content || "";
+    const attendeeCount = contextData?.attendees?.length || 7;
+    const eventCount = contextData?.events?.length || 158;
     return {
       isMock: true,
-      text: `🤖 **Dopamint AutoBot Ready!**\n\nI received your request: "${lastUserMsg}".\n\nI have loaded the **KBW 2026 attendee matrix**: 6 team members (Devishree, Kamesh, Ramkumar, Jawwy, UV, Anup) across 148 tracked events with **688 verified registrations** in the database.\n\n*Note: To enable live LLM reasoning, add your \`MINIMAX_API_KEY\` to \`.env\`. MiniMax uses the OpenAI-compatible endpoint at \`https://api.minimax.io/v1\`.*`,
+      text: `🤖 **Dopamint AutoBot Ready!**\n\nI received your request: "${lastUserMsg}".\n\nI have loaded the attendee matrix: **${attendeeCount} team members** across **${eventCount} tracked events** in the database.\n\n*Note: To enable live LLM reasoning, ensure your \`MINIMAX_API_KEY\` is configured in \`.env\`.*`,
     };
   }
 

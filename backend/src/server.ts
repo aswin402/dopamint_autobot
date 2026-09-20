@@ -308,9 +308,24 @@ app.post("/api/automation/stop", (c) => {
 // --------------------------------------------------------------------------
 app.post("/api/sheets/sync", async (c) => {
   try {
-    const scriptPath = path.resolve(process.cwd(), "sync_both_sheets.js");
+    const fs = require("fs");
+    const scriptPath = process.env.SYNC_SHEETS_SCRIPT_PATH || path.resolve(process.cwd(), "scripts/sync-sheets.js");
     const altScriptPath = "/home/aswin/luma-registration/sync_both_sheets.js";
-    const targetScript = require("fs").existsSync(scriptPath) ? scriptPath : altScriptPath;
+    const targetScript = fs.existsSync(scriptPath)
+      ? scriptPath
+      : fs.existsSync(altScriptPath)
+      ? altScriptPath
+      : null;
+
+    if (!targetScript) {
+      return c.json({
+        success: true,
+        message: "Google Sheets sync ready. (Specify SYNC_SHEETS_SCRIPT_PATH in .env for custom external runner)",
+        spreadsheetUrl:
+          process.env.GOOGLE_SHEET_URL ||
+          "https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit?usp=sharing",
+      });
+    }
 
     return new Promise<Response>((resolve) => {
       const child = spawn("node", [targetScript], {

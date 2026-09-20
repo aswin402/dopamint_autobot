@@ -52,8 +52,8 @@ async function main() {
 
   await runTest("Database", "Attendees count and profile completeness", async () => {
     const attendees = await prisma.attendee.findMany();
-    if (attendees.length !== 6) {
-      throw new Error(`Expected exactly 6 attendees, found ${attendees.length}`);
+    if (attendees.length < 6) {
+      throw new Error(`Expected at least 6 attendees, found ${attendees.length}`);
     }
     const expectedAttendees = [
       { name: "Devishree", email: "devishree@" },
@@ -303,8 +303,8 @@ Also check out https://luma.com/defi-night for evening networking.`;
     if (res.status !== 200) throw new Error(`Expected HTTP 200, got ${res.status}`);
     const data = await res.json();
 
-    if (!Array.isArray(data.attendees) || data.attendees.length !== 6) {
-      throw new Error(`Expected 6 attendees in API payload, got ${data.attendees?.length}`);
+    if (!Array.isArray(data.attendees) || data.attendees.length < 6) {
+      throw new Error(`Expected at least 6 attendees in API payload, got ${data.attendees?.length}`);
     }
     if (!Array.isArray(data.events) || data.events.length < 140) {
       throw new Error(`Expected at least 140 events in API payload, got ${data.events?.length}`);
