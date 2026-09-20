@@ -63,7 +63,30 @@ async function main() {
     });
     attendeeMap.set(emailLower, attendee.id);
   }
-  console.log(`✅ Seeded ${attendeeMap.size} Attendees.`);
+
+  // Add Aswin Vishal
+  const aswin = await prisma.attendee.create({
+    data: {
+      name: "Aswin Vishal",
+      firstName: "Aswin",
+      lastName: "Vishal",
+      email: "aswinvishal402@gmail.com",
+      phone: "+91 9876543210",
+      company: "CelestiaLabs / Dopamint",
+      role: "Lead Fullstack & Automation Engineer",
+      telegram: "@aswinvishal",
+      twitter: "@aswinvishal",
+      linkedin: "https://linkedin.com/in/aswinvishal",
+      website: "https://dopamint.xyz",
+      pitch: "Building autonomous AI agent tools and high-scale decentralized Web3 automation.",
+      gender: "Male",
+      country: "India",
+      wallets: JSON.stringify({ evm: "0x71C26d246c761e89F0042Fe5f87b8f9A4f7C8900" }),
+    },
+  });
+  attendeeMap.set("aswinvishal402@gmail.com", aswin.id);
+
+  console.log(`✅ Seeded ${attendeeMap.size} Attendees (including Aswin Vishal).`);
 
   // 2. Seed Events
   const eventsPath = path.join(LUMA_DIR, "events.json");
@@ -129,6 +152,52 @@ async function main() {
     }
   }
   console.log(`✅ Seeded ${regCount} Registrations.`);
+
+  // 4. Seed Registrations for Aswin Vishal across 12 initial events
+  const aswinId = attendeeMap.get("aswinvishal402@gmail.com");
+  if (aswinId) {
+    const testEventIds = [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13];
+    for (let i = 0; i < testEventIds.length; i++) {
+      const eventId = testEventIds[i];
+      const status = i < 9 ? "confirmed_success" : "waitlist_joined";
+      await prisma.registration.upsert({
+        where: { eventId_attendeeId: { eventId, attendeeId: aswinId } },
+        create: {
+          eventId,
+          attendeeId: aswinId,
+          status,
+          serverStatus: 200,
+          confirmationTimestamp: new Date(),
+        },
+        update: {
+          status,
+          serverStatus: 200,
+        },
+      });
+    }
+    console.log(`✅ Seeded 12 registrations for Aswin Vishal.`);
+  }
+
+  // 5. Seed Default Google Sheet Configuration
+  await prisma.sheetConfig.upsert({
+    where: { id: "default-sheet-config" },
+    update: {},
+    create: {
+      id: "default-sheet-config",
+      name: "Main Registration Tracker",
+      spreadsheetUrl:
+        process.env.GOOGLE_SHEET_URL ||
+        "https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit?usp=sharing",
+      sheetName: "Registrations",
+      syncDirection: "two_way",
+      autoSync: false,
+      frequency: "manual",
+      isActive: true,
+      lastStatus: "ready",
+      lastMessage: "Connected to Google Sheets",
+    },
+  });
+  console.log(`✅ Seeded Google Sheets default configuration.`);
 }
 
 main()

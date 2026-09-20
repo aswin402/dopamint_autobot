@@ -558,24 +558,148 @@ app.post("/api/automation/stop", (c) => {
 // --------------------------------------------------------------------------
 // Google Sheets Synchronization API
 // --------------------------------------------------------------------------
+// Google Sheets Synchronization & CRUD API
+// --------------------------------------------------------------------------
+app.get("/api/sheets/configs", async (c) => {
+  try {
+    let configs = await prisma.sheetConfig.findMany({
+      orderBy: { createdAt: "asc" },
+    });
+
+    if (configs.length === 0) {
+      const defaultUrl =
+        process.env.GOOGLE_SHEET_URL ||
+        "https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit?usp=sharing";
+      const defaultSheet = await prisma.sheetConfig.create({
+        data: {
+          id: "default-sheet-config",
+          name: "Main Registration Tracker",
+          spreadsheetUrl: defaultUrl,
+          sheetName: "Registrations",
+          syncDirection: "two_way",
+          autoSync: false,
+          frequency: "manual",
+          isActive: true,
+          lastStatus: "ready",
+          lastMessage: "Connected to Google Sheets",
+        },
+      });
+      configs = [defaultSheet];
+    }
+
+    return c.json({ configs });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to fetch sheets configs" }, 500);
+  }
+});
+
+app.post("/api/sheets/configs", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { name, spreadsheetUrl, sheetName, syncDirection, autoSync, frequency, isActive } = body;
+    if (!name || !spreadsheetUrl) {
+      return c.json({ error: "name and spreadsheetUrl are required" }, 400);
+    }
+
+    const config = await prisma.sheetConfig.create({
+      data: {
+        name: name.trim(),
+        spreadsheetUrl: spreadsheetUrl.trim(),
+        sheetName: (sheetName || "Sheet1").trim(),
+        syncDirection: syncDirection || "two_way",
+        autoSync: Boolean(autoSync),
+        frequency: frequency || "manual",
+        isActive: isActive !== undefined ? Boolean(isActive) : true,
+        lastStatus: "ready",
+        lastMessage: "Configured and ready to sync",
+      },
+    });
+
+    return c.json({ success: true, config }, 201);
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to create sheet config" }, 500);
+  }
+});
+
+app.put("/api/sheets/configs/:id", async (c) => {
+  try {
+    const id = c.req.param("id");
+    const body = await c.req.json();
+    const { name, spreadsheetUrl, sheetName, syncDirection, autoSync, frequency, isActive } = body;
+
+    const config = await prisma.sheetConfig.update({
+      where: { id },
+      data: {
+        name: name !== undefined ? name.trim() : undefined,
+        spreadsheetUrl: spreadsheetUrl !== undefined ? spreadsheetUrl.trim() : undefined,
+        sheetName: sheetName !== undefined ? sheetName.trim() : undefined,
+        syncDirection,
+        autoSync: autoSync !== undefined ? Boolean(autoSync) : undefined,
+        frequency,
+        isActive: isActive !== undefined ? Boolean(isActive) : undefined,
+      },
+    });
+
+    return c.json({ success: true, config });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to update sheet config" }, 500);
+  }
+});
+
+app.delete("/api/sheets/configs/:id", async (c) => {
+  try {
+    const id = c.req.param("id");
+    await prisma.sheetConfig.delete({ where: { id } });
+    return c.json({ success: true, message: "Sheet config deleted successfully" });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to delete sheet config" }, 500);
+  }
+});
+
 app.post("/api/sheets/sync", async (c) => {
   try {
+    const body = await c.req.json().catch(() => ({}));
+    const { configId } = body;
     const fs = require("fs");
     const scriptPath = process.env.SYNC_SHEETS_SCRIPT_PATH || path.resolve(process.cwd(), "scripts/sync-sheets.js");
     const targetScript = fs.existsSync(scriptPath) ? scriptPath : null;
+
+    let configsToSync = [];
+    if (configId) {
+      const target = await prisma.sheetConfig.findUnique({ where: { id: configId } });
+      if (target) configsToSync.push(target);
+    } else {
+      configsToSync = await prisma.sheetConfig.findMany({ where: { isActive: true } });
+    }
+
+    if (configsToSync.length === 0) {
+      const defaultUrl =
+        process.env.GOOGLE_SHEET_URL ||
+        "https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit?usp=sharing";
+      const created = await prisma.sheetConfig.create({
+        data: {
+          name: "Main Registration Tracker",
+          spreadsheetUrl: defaultUrl,
+          sheetName: "Registrations",
+          syncDirection: "two_way",
+          isActive: true,
+        },
+      });
+      configsToSync.push(created);
+    }
+
+    const syncTargetUrl = configsToSync[0]?.spreadsheetUrl;
 
     if (!targetScript) {
       return c.json({
         success: true,
         message: "Google Sheets sync ready. (Specify SYNC_SHEETS_SCRIPT_PATH in .env for custom external runner)",
-        spreadsheetUrl:
-          process.env.GOOGLE_SHEET_URL ||
-          "https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit?usp=sharing",
+        spreadsheetUrl: syncTargetUrl,
       });
     }
 
     return new Promise<Response>((resolve) => {
-      const child = spawn("node", [targetScript], {
+      const child = spawn("node", [targetScript, syncTargetUrl], {
         cwd: path.dirname(targetScript),
         env: process.env,
       });
@@ -591,16 +715,25 @@ app.post("/api/sheets/sync", async (c) => {
         stderr += data.toString();
       });
 
-      child.on("close", (code) => {
+      child.on("close", async (code) => {
         if (code === 0) {
+          for (const config of configsToSync) {
+            await prisma.sheetConfig.update({
+              where: { id: config.id },
+              data: {
+                lastSyncAt: new Date(),
+                lastStatus: "success",
+                lastMessage: `Synchronized successfully to ${config.sheetName}`,
+              },
+            }).catch(() => null);
+          }
+
           resolve(
             c.json({
               success: true,
-              message: "Google Sheets successfully updated via Hono backend!",
+              message: `Google Sheets successfully updated (${configsToSync.length} connected)!`,
               stdout: stdout.trim(),
-              spreadsheetUrl:
-                process.env.GOOGLE_SHEET_URL ||
-                "https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit?usp=sharing",
+              spreadsheetUrl: syncTargetUrl,
             })
           );
         } else {

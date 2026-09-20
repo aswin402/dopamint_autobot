@@ -48,6 +48,7 @@ yarn-error.log*
 *.jpg
 *.jpeg
 /screenshots
+.sync_cache/
 
 # vercel
 .vercel

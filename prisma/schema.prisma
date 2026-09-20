@@ -91,3 +91,19 @@ model AutomationJob {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }
+
+model SheetConfig {
+  id             String    @id @default(uuid())
+  name           String
+  spreadsheetUrl String
+  sheetName      String    @default("Sheet1")
+  syncDirection  String    @default("two_way") // two_way, export_only, import_only
+  autoSync       Boolean   @default(false)
+  frequency      String    @default("manual") // manual, 15m, 1h, daily
+  isActive       Boolean   @default(true)
+  lastSyncAt     DateTime?
+  lastStatus     String?   // success, failed, pending
+  lastMessage    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
