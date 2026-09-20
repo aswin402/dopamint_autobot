@@ -41,6 +41,10 @@ class AutomationRunner {
   private currentAttendee: { id: string; name: string; email: string } | null = null;
   private totalItems: number = 0;
   private completedItems: number = 0;
+  private successCount: number = 0;
+  private failedCount: number = 0;
+  private waitlistCount: number = 0;
+  private skippedCount: number = 0;
   private recentConfirmations: Array<{
     eventId: number;
     eventTitle: string;
@@ -65,6 +69,11 @@ class AutomationRunner {
         completed: this.completedItems,
         total: this.totalItems,
         percent,
+        successCount: this.successCount,
+        failedCount: this.failedCount,
+        waitlistCount: this.waitlistCount,
+        skippedCount: this.skippedCount,
+        remainingCount: Math.max(0, this.totalItems - this.completedItems),
       },
       stealthMetrics: {
         stealthActive: true,
@@ -132,6 +141,10 @@ class AutomationRunner {
     this.activeJobId = `job_${Date.now()}`;
     this.totalItems = eventIds.length * attendeeIds.length;
     this.completedItems = 0;
+    this.successCount = 0;
+    this.failedCount = 0;
+    this.waitlistCount = 0;
+    this.skippedCount = 0;
     this.log(
       `🚀 Starting batch registration: ${eventIds.length} events across ${attendeeIds.length} team members [${
         this.isHeadless ? "Headless Mode" : "👁️ Visual Headed Browser Mode (slowMo: 150ms)"
@@ -229,12 +242,14 @@ class AutomationRunner {
           if (existing && existing.status === "confirmed_success") {
             this.log(`⏩ Event #${ev.id} already confirmed for ${person.name}. Skipping.`, "info");
             this.completedItems++;
+            this.skippedCount++;
             continue;
           }
 
           if (!ev.url || !ev.url.startsWith("http")) {
             this.log(`⏩ Event #${ev.id} (${ev.title}) has invalid or missing URL. Skipping.`, "warn");
             this.completedItems++;
+            this.failedCount++;
             continue;
           }
 
@@ -365,15 +380,27 @@ class AutomationRunner {
               consecutiveSuccesses++;
 
               if (status === "confirmed_success" || isConfirmed) {
+                this.successCount++;
                 this.recentConfirmations.unshift({
                   eventId: ev.id,
                   eventTitle: ev.title,
                   attendeeName: person.name,
                   timestamp: new Date().toISOString(),
                 });
+              } else if (status === "waitlist_joined") {
+                this.waitlistCount++;
+                this.recentConfirmations.unshift({
+                  eventId: ev.id,
+                  eventTitle: ev.title,
+                  attendeeName: person.name,
+                  timestamp: new Date().toISOString(),
+                });
+              } else {
+                this.failedCount++;
               }
             }
           } catch (err: any) {
+            this.failedCount++;
             this.log(`⚠️ Error on Event #${ev.id} for ${person.name}: ${err.message}`, "error");
           } finally {
             page.off("response", responseHandler);
