@@ -33,12 +33,18 @@ import {
   Clock,
   ShieldCheck,
   Check,
+  Edit3,
+  Save,
+  Bookmark,
+  Database,
+  Copy,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DetectedField, InspectionResult } from "@/lib/automation/runner";
 import { playNotificationChime, triggerDesktopNotification } from "@/lib/notifications";
 
-interface AttendeeProfile {
+export interface AttendeeProfile {
   id?: string;
   name: string;
   email: string;
@@ -50,8 +56,18 @@ interface AttendeeProfile {
   [key: string]: any;
 }
 
+interface SavedTemplate {
+  id: string;
+  name: string;
+  url: string;
+  data: Record<string, string>;
+  createdAt: string;
+}
+
 interface UniversalFormStudioProps {
   attendees?: any[];
+  events?: any[];
+  onRefreshData?: () => Promise<void> | void;
   isVisualMode?: boolean;
   onToggleVisualMode?: () => void;
   onLaunchSuccess?: () => void;
@@ -59,49 +75,50 @@ interface UniversalFormStudioProps {
 
 export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   attendees = [],
+  events = [],
+  onRefreshData,
   isVisualMode = false,
   onToggleVisualMode,
   onLaunchSuccess,
 }) => {
-  // Active Tab: "single" or "matrix"
-  const [activeTab, setActiveTab] = useState<"single" | "matrix">("matrix");
+  // Active Tab: "matrix" ($N$ URLs × $M$ People) or "single" (Focused Form Studio)
+  const [activeTab, setActiveTab] = useState<"matrix" | "single">("matrix");
 
   // --------------------------------------------------------------------------
-  // Single Form Studio State
+  // Single Form Studio State (Zero Hardcoded Defaults)
   // --------------------------------------------------------------------------
-  const [targetUrl, setTargetUrl] = useState("https://mowli.in/");
+  const [targetUrl, setTargetUrl] = useState<string>("");
   const [isInspecting, setIsInspecting] = useState(false);
   const [inspectionResult, setInspectionResult] = useState<InspectionResult | null>(null);
   const [inspectError, setInspectError] = useState<string | null>(null);
 
+  // Dynamic Key-Value Form Payload (CRUD: Add, Edit, Delete field pairs)
   const [formData, setFormData] = useState<Record<string, string>>({
-    name: "aswin",
-    email: "aswinvishal402@gmail.com",
-    phone: "9384514564",
-    message: "hii",
-    company: "Celestialabs",
-    role: "Developer",
+    name: "",
+    email: "",
+    phone: "",
+    message: "",
   });
+
+  // State for adding custom fields to payload
+  const [newFieldKey, setNewFieldKey] = useState<string>("");
+  const [newFieldValue, setNewFieldValue] = useState<string>("");
+  const [showAddFieldForm, setShowAddFieldForm] = useState<boolean>(false);
 
   const [isSingleLaunching, setIsSingleLaunching] = useState(false);
   const [singleLaunchMessage, setSingleLaunchMessage] = useState<string | null>(null);
   const [singleLaunchSuccess, setSingleLaunchSuccess] = useState<boolean | null>(null);
 
+  // Saved Templates (Stored in LocalStorage)
+  const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
+  const [templateNameInput, setTemplateNameInput] = useState<string>("");
+  const [showSaveTemplateModal, setShowSaveTemplateModal] = useState<boolean>(false);
+
   // --------------------------------------------------------------------------
   // Multi-Target Matrix Runner State ($N$ URLs × $M$ People)
   // --------------------------------------------------------------------------
-  const [matrixUrlsText, setMatrixUrlsText] = useState("https://mowli.in/");
-  const [matrixProfiles, setMatrixProfiles] = useState<AttendeeProfile[]>([
-    {
-      id: "p-1",
-      name: "aswin",
-      email: "aswinvishal402@gmail.com",
-      phone: "9384514564",
-      message: "hii",
-      company: "Celestialabs",
-      role: "Developer",
-    },
-  ]);
+  const [matrixUrlsText, setMatrixUrlsText] = useState<string>("");
+  const [matrixProfiles, setMatrixProfiles] = useState<AttendeeProfile[]>([]);
 
   const [pairingMode, setPairingMode] = useState<"cartesian" | "pairwise">("cartesian");
   const [pacingDelaySec, setPacingDelaySec] = useState<number>(8);
@@ -112,16 +129,22 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   const [uploadFeedback, setUploadFeedback] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // New Profile Form
-  const [showAddProfileModal, setShowAddProfileModal] = useState(false);
-  const [newProfile, setNewProfile] = useState<AttendeeProfile>({
+  // Profile Modal (Handles both CREATE and UPDATE CRUD operations)
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [editingProfileIndex, setEditingProfileIndex] = useState<number | null>(null);
+  const [syncProfileToDatabase, setSyncProfileToDatabase] = useState(false);
+  const [profileForm, setProfileForm] = useState<AttendeeProfile>({
     name: "",
     email: "",
     phone: "",
-    message: "Hello, interested in collaborating!",
-    company: "Celestialabs",
-    role: "Member",
+    company: "",
+    role: "",
+    message: "",
   });
+
+  // URL Editing Modal (Handles Target URL UPDATE CRUD)
+  const [editingUrlIndex, setEditingUrlIndex] = useState<number | null>(null);
+  const [editingUrlValue, setEditingUrlValue] = useState<string>("");
 
   // Batch Live Monitoring State
   const [isMatrixRunning, setIsMatrixRunning] = useState(false);
@@ -141,13 +164,367 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
       ? Math.max(targetUrlsList.length, matrixProfiles.length)
       : targetUrlsList.length * matrixProfiles.length;
 
-  // Single Form Quick Presets
-  const presets = [
-    { label: "Mowli.in (Contact Form)", url: "https://mowli.in/" },
-  ];
+  // Load saved templates from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("autobot_saved_templates");
+      if (saved) {
+        setSavedTemplates(JSON.parse(saved));
+      }
+    } catch {}
+  }, []);
+
+  // Save templates to localStorage
+  const persistTemplates = (templates: SavedTemplate[]) => {
+    setSavedTemplates(templates);
+    try {
+      localStorage.setItem("autobot_saved_templates", JSON.stringify(templates));
+    } catch {}
+  };
 
   // --------------------------------------------------------------------------
-  // Single Form Actions
+  // Profile CRUD Operations
+  // --------------------------------------------------------------------------
+  const handleOpenAddProfile = () => {
+    setEditingProfileIndex(null);
+    setProfileForm({
+      name: "",
+      email: "",
+      phone: "",
+      company: "",
+      role: "",
+      message: "",
+    });
+    setSyncProfileToDatabase(false);
+    setShowProfileModal(true);
+  };
+
+  const handleOpenEditProfile = (profile: AttendeeProfile, index: number) => {
+    setEditingProfileIndex(index);
+    setProfileForm({
+      id: profile.id,
+      name: profile.name || "",
+      email: profile.email || "",
+      phone: profile.phone || "",
+      company: profile.company || "",
+      role: profile.role || "",
+      message: profile.message || profile.pitch || "",
+    });
+    setSyncProfileToDatabase(Boolean(profile.id && !profile.id.startsWith("local-")));
+    setShowProfileModal(true);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!profileForm.name.trim() || !profileForm.email.trim()) {
+      alert("Name and Email are required fields.");
+      return;
+    }
+
+    const payload: AttendeeProfile = {
+      ...profileForm,
+      name: profileForm.name.trim(),
+      email: profileForm.email.trim(),
+      phone: profileForm.phone?.trim() || "",
+      company: profileForm.company?.trim() || "",
+      role: profileForm.role?.trim() || "",
+      message: profileForm.message?.trim() || "",
+    };
+
+    // If user chose to sync with SQLite Database
+    if (syncProfileToDatabase) {
+      try {
+        if (payload.id && !payload.id.startsWith("local-")) {
+          // Update existing DB attendee
+          await fetch(`/api/attendees/${payload.id}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: payload.name,
+              email: payload.email,
+              phone: payload.phone,
+              company: payload.company,
+              role: payload.role,
+              pitch: payload.message,
+            }),
+          });
+        } else {
+          // Create new DB attendee
+          const res = await fetch("/api/attendees", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: payload.name,
+              email: payload.email,
+              phone: payload.phone,
+              company: payload.company,
+              role: payload.role,
+              pitch: payload.message,
+            }),
+          });
+          const created = await res.json();
+          if (created.attendee?.id) {
+            payload.id = created.attendee.id;
+          }
+        }
+        await onRefreshData?.();
+      } catch (err) {
+        console.error("Failed to sync profile with database:", err);
+      }
+    }
+
+    if (editingProfileIndex !== null) {
+      // UPDATE existing profile in state
+      setMatrixProfiles((prev) => {
+        const updated = [...prev];
+        updated[editingProfileIndex] = {
+          ...updated[editingProfileIndex],
+          ...payload,
+        };
+        return updated;
+      });
+    } else {
+      // CREATE new profile in state
+      setMatrixProfiles((prev) => [
+        ...prev,
+        {
+          ...payload,
+          id: payload.id || `local-${Date.now()}`,
+        },
+      ]);
+    }
+
+    setShowProfileModal(false);
+  };
+
+  const handleRemoveProfile = (index: number) => {
+    setMatrixProfiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleClearAllProfiles = () => {
+    if (confirm("Are you sure you want to remove all profiles from the batch list?")) {
+      setMatrixProfiles([]);
+    }
+  };
+
+  const handleImportAllRoster = () => {
+    if (attendees.length === 0) return;
+    const existingEmails = new Set(matrixProfiles.map((p) => p.email.toLowerCase()));
+    const newItems: AttendeeProfile[] = attendees
+      .filter((a) => !existingEmails.has(a.email.toLowerCase()))
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        email: a.email,
+        phone: a.phone || "",
+        company: a.company || "",
+        role: a.role || "",
+        message: a.pitch || "",
+      }));
+
+    setMatrixProfiles((prev) => [...prev, ...newItems]);
+  };
+
+  const handleImportSingleRosterAttendee = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value;
+    if (!id) return;
+    const a = attendees.find((item) => item.id === id);
+    if (a) {
+      if (!matrixProfiles.some((p) => p.email.toLowerCase() === a.email.toLowerCase())) {
+        setMatrixProfiles((prev) => [
+          ...prev,
+          {
+            id: a.id,
+            name: a.name,
+            email: a.email,
+            phone: a.phone || "",
+            company: a.company || "",
+            role: a.role || "",
+            message: a.pitch || "",
+          },
+        ]);
+      }
+    }
+    e.target.value = "";
+  };
+
+  // --------------------------------------------------------------------------
+  // Target URL CRUD Operations
+  // --------------------------------------------------------------------------
+  const handleRemoveUrl = (index: number) => {
+    const updated = targetUrlsList.filter((_, i) => i !== index);
+    setMatrixUrlsText(updated.join("\n"));
+  };
+
+  const handleStartEditUrl = (index: number) => {
+    setEditingUrlIndex(index);
+    setEditingUrlValue(targetUrlsList[index] || "");
+  };
+
+  const handleSaveEditUrl = () => {
+    if (editingUrlIndex === null) return;
+    const trimmed = editingUrlValue.trim();
+    if (!trimmed.startsWith("http")) {
+      alert("Please enter a valid URL starting with http:// or https://");
+      return;
+    }
+    const updated = [...targetUrlsList];
+    updated[editingUrlIndex] = trimmed;
+    setMatrixUrlsText(updated.join("\n"));
+    setEditingUrlIndex(null);
+    setEditingUrlValue("");
+  };
+
+  const handleImportEventUrl = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const eventUrl = e.target.value;
+    if (!eventUrl) return;
+    const existing = new Set(targetUrlsList);
+    if (!existing.has(eventUrl)) {
+      setMatrixUrlsText((prev) => (prev ? `${prev}\n${eventUrl}` : eventUrl));
+    }
+    e.target.value = "";
+  };
+
+  const handleClearAllUrls = () => {
+    if (confirm("Clear all target URLs?")) {
+      setMatrixUrlsText("");
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // Document Upload Extraction Handler (.pdf, .xlsx, .csv, .docx, .md)
+  // --------------------------------------------------------------------------
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    setUploadFeedback(null);
+
+    const formDataUpload = new FormData();
+    formDataUpload.append("file", file);
+
+    try {
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formDataUpload,
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to parse document");
+      }
+
+      let urlsAdded = 0;
+      let peopleAdded = 0;
+
+      // Extract and merge Target URLs
+      if (data.events && Array.isArray(data.events) && data.events.length > 0) {
+        const newUrls = data.events.map((ev: any) => ev.url).filter(Boolean);
+        const existingUrls = matrixUrlsText.split("\n").map((u) => u.trim()).filter(Boolean);
+        const mergedUrls = Array.from(new Set([...existingUrls, ...newUrls]));
+        setMatrixUrlsText(mergedUrls.join("\n"));
+        urlsAdded = newUrls.length;
+      }
+
+      // Extract and merge Attendees / Profiles without hardcoded fallbacks
+      if (data.attendees && Array.isArray(data.attendees) && data.attendees.length > 0) {
+        const parsedProfiles: AttendeeProfile[] = data.attendees.map((a: any, i: number) => ({
+          id: `doc-${Date.now()}-${i}`,
+          name: a.name || "Member",
+          email: a.email,
+          phone: a.phone || "",
+          company: a.company || "",
+          role: a.role || "",
+          message: a.pitch || "",
+        }));
+
+        setMatrixProfiles((prev) => {
+          const seen = new Set(prev.map((p) => p.email.toLowerCase()));
+          const uniqueNew = parsedProfiles.filter((p) => !seen.has(p.email.toLowerCase()));
+          return [...prev, ...uniqueNew];
+        });
+        peopleAdded = parsedProfiles.length;
+      }
+
+      setUploadFeedback(
+        `✅ Successfully extracted ${urlsAdded} target URLs and ${peopleAdded} attendee profiles from ${file.name}.`
+      );
+      setTimeout(() => setUploadFeedback(null), 6000);
+    } catch (err: any) {
+      setUploadFeedback(`⚠️ Upload error: ${err.message}`);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // --------------------------------------------------------------------------
+  // Single Form Dynamic Payload CRUD
+  // --------------------------------------------------------------------------
+  const handleAddCustomField = () => {
+    const key = newFieldKey.trim().toLowerCase().replace(/\s+/g, "_");
+    if (!key) return;
+    setFormData((prev) => ({
+      ...prev,
+      [key]: newFieldValue.trim(),
+    }));
+    setNewFieldKey("");
+    setNewFieldValue("");
+    setShowAddFieldForm(false);
+  };
+
+  const handleRemoveField = (keyToRemove: string) => {
+    setFormData((prev) => {
+      const next = { ...prev };
+      delete next[keyToRemove];
+      return next;
+    });
+  };
+
+  const handleAutofillFromAttendee = (attendeeId: string) => {
+    const attendee = attendees.find((a) => a.id === attendeeId);
+    if (!attendee) return;
+
+    setFormData((prev) => ({
+      ...prev,
+      name: attendee.name || prev.name || "",
+      email: attendee.email || prev.email || "",
+      phone: attendee.phone || prev.phone || "",
+      company: attendee.company || prev.company || "",
+      role: attendee.role || prev.role || "",
+      message: attendee.pitch || prev.message || "",
+      telegram: attendee.telegram || prev.telegram || "",
+      website: attendee.website || prev.website || "",
+      country: attendee.country || prev.country || "",
+    }));
+  };
+
+  const handleSaveTemplate = () => {
+    const name = templateNameInput.trim() || `Template ${savedTemplates.length + 1}`;
+    const newTemplate: SavedTemplate = {
+      id: `tpl-${Date.now()}`,
+      name,
+      url: targetUrl.trim(),
+      data: { ...formData },
+      createdAt: new Date().toISOString(),
+    };
+    persistTemplates([...savedTemplates, newTemplate]);
+    setTemplateNameInput("");
+    setShowSaveTemplateModal(false);
+  };
+
+  const handleLoadTemplate = (tpl: SavedTemplate) => {
+    setTargetUrl(tpl.url);
+    setFormData({ ...tpl.data });
+  };
+
+  const handleDeleteTemplate = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    persistTemplates(savedTemplates.filter((t) => t.id !== id));
+  };
+
+  // --------------------------------------------------------------------------
+  // Single Form Actions (Inspect & Launch)
   // --------------------------------------------------------------------------
   const handleInspect = async (urlToInspect?: string) => {
     const url = urlToInspect || targetUrl;
@@ -174,18 +551,19 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
 
       setInspectionResult(data);
 
-      const updatedData = { ...formData };
-      data.fields.forEach((f: DetectedField) => {
-        if (f.suggestedKey && !updatedData[f.suggestedKey]) {
-          if (f.suggestedKey === "name") updatedData.name = "aswin";
-          else if (f.suggestedKey === "email") updatedData.email = "aswinvishal402@gmail.com";
-          else if (f.suggestedKey === "phone") updatedData.phone = "9384514564";
-          else if (f.suggestedKey === "message") updatedData.message = "hii";
-        }
+      // Dynamically add detected DOM keys to formData without hardcoding any values
+      setFormData((prev) => {
+        const updated = { ...prev };
+        data.fields.forEach((f: DetectedField) => {
+          const key = (f.suggestedKey || f.name || f.label || "field").toLowerCase().replace(/\s+/g, "_");
+          if (key && !(key in updated)) {
+            updated[key] = "";
+          }
+        });
+        return updated;
       });
-      setFormData(updatedData);
     } catch (err: any) {
-      setInspectError(err.message || "Failed to analyze target DOM");
+      setInspectError(err.message || "Failed to analyze target DOM schema");
     } finally {
       setIsInspecting(false);
     }
@@ -220,7 +598,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
 
       setSingleLaunchSuccess(true);
       setSingleLaunchMessage(
-        `🚀 Agent started autonomous execution on ${targetUrl} [${
+        `🚀 Agent started execution on ${targetUrl} [${
           isVisualMode ? "Visual Browser Window" : "Headless Stealth"
         }]. Actively monitoring progress...`
       );
@@ -239,11 +617,11 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
               setIsSingleLaunching(false);
               playNotificationChime();
               triggerDesktopNotification(
-                "Dopamint Autonomous Agent",
-                `Automation completed for ${targetUrl}! 1 confirmed success.`
+                "Autonomous Agent Studio",
+                `Automation completed for ${targetUrl}!`
               );
               setSingleLaunchMessage(
-                `🎉 Success! Autonomous form submission completed and verified on ${targetUrl} (1/1 success, 0 errors).`
+                `🎉 Success! Autonomous form submission completed and verified on ${targetUrl}.`
               );
             }
           }
@@ -280,7 +658,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
 
     const targets = targetUrlsList.map((url, i) => ({
       url,
-      title: `Form #${i + 1}`,
+      title: `Target Form #${i + 1}`,
     }));
 
     try {
@@ -363,150 +741,33 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
     } catch {}
   };
 
-  // --------------------------------------------------------------------------
-  // Document Upload Extraction Handler (.pdf, .xlsx, .csv, .docx, .md)
-  // --------------------------------------------------------------------------
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsUploading(true);
-    setUploadFeedback(null);
-
-    const formDataUpload = new FormData();
-    formDataUpload.append("file", file);
-
-    try {
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formDataUpload,
-      });
-
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || "Failed to parse document");
-      }
-
-      let urlsAdded = 0;
-      let peopleAdded = 0;
-
-      // Extract and merge Target URLs
-      if (data.events && Array.isArray(data.events) && data.events.length > 0) {
-        const newUrls = data.events.map((ev: any) => ev.url).filter(Boolean);
-        const existingUrls = matrixUrlsText.split("\n").map((u) => u.trim()).filter(Boolean);
-        const mergedUrls = Array.from(new Set([...existingUrls, ...newUrls]));
-        setMatrixUrlsText(mergedUrls.join("\n"));
-        urlsAdded = newUrls.length;
-      }
-
-      // Extract and merge Attendees / Profiles
-      if (data.attendees && Array.isArray(data.attendees) && data.attendees.length > 0) {
-        const parsedProfiles: AttendeeProfile[] = data.attendees.map((a: any, i: number) => ({
-          id: `doc-${Date.now()}-${i}`,
-          name: a.name || "Member",
-          email: a.email,
-          phone: a.phone || "9384514564",
-          company: a.company || "Celestialabs",
-          role: a.role || "Member",
-          message: a.pitch || "Hello, interested in connecting!",
-        }));
-
-        setMatrixProfiles((prev) => {
-          const seen = new Set(prev.map((p) => p.email.toLowerCase()));
-          const uniqueNew = parsedProfiles.filter((p) => !seen.has(p.email.toLowerCase()));
-          return [...prev, ...uniqueNew];
-        });
-        peopleAdded = parsedProfiles.length;
-      }
-
-      setUploadFeedback(
-        `✅ Successfully processed ${file.name}! Ingested ${urlsAdded} target URLs and ${peopleAdded} people profiles.`
-      );
-    } catch (err: any) {
-      setUploadFeedback(`⚠️ Upload failed: ${err.message}`);
-    } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
-
-  // Add person from database roster
-  const handleImportRosterAttendee = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value;
-    if (!id) return;
-    const a = attendees.find((item) => item.id === id);
-    if (a) {
-      if (matrixProfiles.some((p) => p.email.toLowerCase() === a.email.toLowerCase())) {
-        return;
-      }
-      setMatrixProfiles((prev) => [
-        ...prev,
-        {
-          id: a.id,
-          name: a.name,
-          email: a.email,
-          phone: a.phone || "9384514564",
-          company: a.company || "Celestialabs",
-          role: a.role || "Member",
-          message: a.pitch || "Hello, interested in connecting!",
-        },
-      ]);
-    }
-    e.target.value = "";
-  };
-
-  // Add custom person modal save
-  const handleSaveNewProfile = () => {
-    if (!newProfile.name || !newProfile.email) return;
-    setMatrixProfiles((prev) => [
-      ...prev,
-      {
-        ...newProfile,
-        id: `custom-${Date.now()}`,
-      },
-    ]);
-    setNewProfile({
-      name: "",
-      email: "",
-      phone: "",
-      message: "Hello, interested in connecting!",
-      company: "Celestialabs",
-      role: "Member",
-    });
-    setShowAddProfileModal(false);
-  };
-
-  const handleRemoveProfile = (index: number) => {
-    setMatrixProfiles((prev) => prev.filter((_, i) => i !== index));
-  };
-
   return (
-    <div className="flex-1 w-full h-full overflow-y-auto min-h-0 bg-background">
+    <div className="flex-1 w-full h-full overflow-y-auto min-h-0 bg-background custom-scrollbar">
       <div className="flex flex-col gap-6 p-4 sm:p-6 md:p-8 max-w-6xl mx-auto w-full pb-32">
         {/* Top Header Bar */}
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-border">
           <div className="space-y-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl sm:text-2xl font-bold text-foreground tracking-tight">
-                Universal Form Studio
+              <h1 className="text-xl sm:text-2xl font-bold text-foreground tracking-tight flex items-center gap-2">
+                <span>Autonomous Form Studio</span>
+                <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs font-semibold">
+                  Zero-Hardcoding
+                </Badge>
               </h1>
-              <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs font-semibold">
-                Zero-Hardcoding
-              </Badge>
               {isMatrixRunning && (
                 <Badge variant="warning" className="animate-pulse text-xs flex items-center gap-1">
                   <RefreshCw className="w-3 h-3 animate-spin" />
-                  {isMatrixPaused ? "Paused" : "Matrix Running"}
+                  {isMatrixPaused ? "Paused" : "Batch Active"}
                 </Badge>
               )}
             </div>
             <p className="text-xs sm:text-sm text-muted-foreground">
-              Autonomous form automation engine. Supports $N$ links $\times$ $M$ people, document ingestion (.pdf, .xlsx, .docx, .md), and stealth anti-bot pacing.
+              Autonomous browser-driven form execution. Supports batch matrix ($N$ Links × $M$ People), document parsing (.pdf, .xlsx, .docx, .md), and stealth anti-bot evasion.
             </p>
           </div>
 
           {/* Visual Browser Mode Toggle */}
-          <div className="flex items-center gap-3 bg-card border border-border px-3.5 py-2 rounded-xl shadow-2xs self-start sm:self-auto">
+          <div className="flex items-center gap-3 bg-card border border-border px-3.5 py-2 rounded-xl shadow-2xs self-start sm:self-auto shrink-0">
             <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
               {isVisualMode ? (
                 <>
@@ -526,7 +787,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
               className={`w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer ${
                 isVisualMode ? "bg-primary" : "bg-muted"
               }`}
-              title="Toggle between on-screen physical Chromium window (150ms slowMo) and background headless mode"
+              title="Toggle between physical on-screen browser window and background stealth mode"
             >
               <div
                 className={`w-4 h-4 rounded-full bg-background transition-transform shadow-2xs ${
@@ -565,7 +826,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
             }`}
           >
             <Globe className="w-4 h-4 text-primary" />
-            <span>Single Form Inspector</span>
+            <span>Single Form Studio</span>
           </button>
         </div>
 
@@ -587,7 +848,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Upload a spreadsheet, PDF document, or Word document containing form URLs and people records. The autonomous parser extracts them automatically.
+                  Upload spreadsheets, registration forms, or documents. The agent automatically extracts target URLs and attendee records with zero hardcoding.
                 </p>
               </div>
 
@@ -621,7 +882,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
             </div>
 
             {uploadFeedback && (
-              <div className="flex items-center gap-2 p-3 bg-primary/10 border border-primary/20 text-xs text-primary rounded-xl">
+              <div className="flex items-center gap-2 p-3 bg-primary/10 border border-primary/20 text-xs text-primary rounded-xl animate-in fade-in">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
                 <span>{uploadFeedback}</span>
               </div>
@@ -629,73 +890,108 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
 
             {/* Matrix Setup Grid (URLs on Left, People Profiles on Right) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Left Column: N Target Form URLs */}
+              {/* Left Column: N Target Form URLs (with Full CRUD) */}
               <div className="lg:col-span-6 flex flex-col gap-3 bg-card border border-border rounded-2xl p-5 shadow-2xs">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                     <Globe className="w-4 h-4 text-primary" />
                     <span>Target Form URLs ($N$)</span>
                   </label>
-                  <Badge variant="secondary" className="text-xs font-mono font-bold">
-                    {targetUrlsList.length} URLs Loaded
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs font-mono font-bold">
+                      {targetUrlsList.length} Targets
+                    </Badge>
+                    {targetUrlsList.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearAllUrls}
+                        className="text-[11px] px-2 py-0.5 rounded-lg bg-muted hover:bg-rose-500/10 hover:text-rose-500 text-muted-foreground border border-border transition-colors cursor-pointer"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Paste target form links (one URL per line). The agent inspects each page's DOM semantically.
+                  Paste form URLs below (one per line) or import from your saved events list:
                 </p>
+
+                {/* Import from Saved Events Dropdown */}
+                {events.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground shrink-0 flex items-center gap-1">
+                      <Database className="w-3 h-3 text-primary" />
+                      <span>Saved Events:</span>
+                    </span>
+                    <select
+                      onChange={handleImportEventUrl}
+                      defaultValue=""
+                      className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
+                    >
+                      <option value="" disabled>
+                        Choose an event to add its URL...
+                      </option>
+                      {events.map((ev) => (
+                        <option key={ev.id} value={ev.url}>
+                          {ev.title} ({ev.url})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
 
                 <textarea
                   value={matrixUrlsText}
                   onChange={(e) => setMatrixUrlsText(e.target.value)}
-                  rows={6}
-                  placeholder="https://mowli.in/&#10;https://example.com/contact&#10;https://form.domain.org/signup"
+                  rows={5}
+                  placeholder="https://example.com/register&#10;https://forms.company.com/survey&#10;https://mowli.in/"
                   className="w-full bg-background border border-border rounded-xl p-3 text-xs sm:text-sm font-mono text-foreground placeholder:text-muted-foreground/60 outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all resize-y"
                 />
 
-                {/* Quick chip buttons */}
-                <div className="flex items-center gap-2 flex-wrap pt-1">
-                  <span className="text-[11px] text-muted-foreground">Quick Add:</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!matrixUrlsText.includes("https://mowli.in/")) {
-                        setMatrixUrlsText((prev) => (prev ? `${prev}\nhttps://mowli.in/` : "https://mowli.in/"));
-                      }
-                    }}
-                    className="text-[11px] px-2 py-0.5 rounded-lg bg-muted hover:bg-muted/80 text-foreground border border-border transition-colors cursor-pointer"
-                  >
-                    + Mowli.in
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMatrixUrlsText("")}
-                    className="text-[11px] px-2 py-0.5 rounded-lg bg-muted hover:bg-rose-500/10 hover:text-rose-500 text-muted-foreground border border-border transition-colors cursor-pointer"
-                  >
-                    Clear All
-                  </button>
-                </div>
-
-                {/* Target URLs List Preview */}
+                {/* Target URLs List Preview with In-Place CRUD (Edit, Delete) */}
                 <div className="space-y-1.5 pt-2">
                   <span className="text-[11px] font-semibold text-muted-foreground uppercase">
-                    Configured Targets:
+                    Configured Targets ({targetUrlsList.length}):
                   </span>
-                  <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+                  <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
                     {targetUrlsList.length === 0 ? (
-                      <p className="text-xs text-muted-foreground/70 italic">No valid URLs entered yet.</p>
+                      <div className="p-4 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground">
+                        No target URLs added yet. Enter links above, select a saved event, or upload a document.
+                      </div>
                     ) : (
                       targetUrlsList.map((url, i) => (
                         <div
                           key={i}
-                          className="flex items-center justify-between p-2 rounded-lg bg-background border border-border/70 text-xs font-mono"
+                          className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-background border border-border text-xs group hover:border-primary/40 transition-all"
                         >
-                          <span className="truncate max-w-[280px] sm:max-w-[340px] text-foreground">
-                            #{i + 1} {url}
-                          </span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-sans font-semibold">
-                            Ready
-                          </span>
+                          <div className="flex items-center gap-2 min-w-0 flex-1 font-mono">
+                            <span className="w-5 h-5 rounded-md bg-primary/10 text-primary text-[10px] font-bold flex items-center justify-center shrink-0">
+                              #{i + 1}
+                            </span>
+                            <span className="truncate text-foreground" title={url}>
+                              {url}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => handleStartEditUrl(i)}
+                              className="p-1 rounded-md text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors cursor-pointer"
+                              title="Edit URL"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveUrl(i)}
+                              className="p-1 rounded-md text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+                              title="Delete URL"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       ))
                     )}
@@ -703,7 +999,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 </div>
               </div>
 
-              {/* Right Column: M People / Profiles */}
+              {/* Right Column: M People / Profiles (with Full CRUD) */}
               <div className="lg:col-span-6 flex flex-col gap-3 bg-card border border-border rounded-2xl p-5 shadow-2xs">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
@@ -716,26 +1012,38 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                     </Badge>
                     <button
                       type="button"
-                      onClick={() => setShowAddProfileModal(true)}
-                      className="px-2.5 py-1 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-all"
+                      onClick={handleOpenAddProfile}
+                      className="px-2.5 py-1 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-all shadow-2xs"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>Add Person</span>
+                      <span>Add Profile</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Import from Team Roster */}
+                {/* Import from Team Roster Controls */}
                 {attendees.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground shrink-0">Import Roster:</span>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0 flex items-center gap-1">
+                        <Users className="w-3 h-3 text-primary" />
+                        <span>Team Roster:</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleImportAllRoster}
+                        className="text-[11px] text-primary hover:underline font-medium cursor-pointer"
+                      >
+                        + Import All ({attendees.length})
+                      </button>
+                    </div>
                     <select
-                      onChange={handleImportRosterAttendee}
+                      onChange={handleImportSingleRosterAttendee}
                       defaultValue=""
                       className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
                     >
                       <option value="" disabled>
-                        Select member from Team Roster...
+                        Choose individual member from Team Roster...
                       </option>
                       {attendees.map((a) => (
                         <option key={a.id} value={a.id}>
@@ -746,26 +1054,35 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                   </div>
                 )}
 
-                {/* Profiles Cards List */}
+                {/* Profiles Cards List with Edit & Delete CRUD */}
                 <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
                   {matrixProfiles.length === 0 ? (
-                    <div className="text-center py-6 text-xs text-muted-foreground">
-                      No profile records added. Click "Add Person" or upload a document.
+                    <div className="p-6 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground space-y-2">
+                      <Users className="w-6 h-6 mx-auto opacity-40 text-primary" />
+                      <p>No profiles added yet.</p>
+                      <p className="text-[11px] text-muted-foreground/80">
+                        Click "Add Profile", import from your Team Roster, or upload a document.
+                      </p>
                     </div>
                   ) : (
                     matrixProfiles.map((p, idx) => (
                       <div
-                        key={idx}
-                        className="flex items-center justify-between p-3 rounded-xl bg-background border border-border hover:border-border/80 transition-all group"
+                        key={p.id || idx}
+                        className="flex items-center justify-between p-3 rounded-xl bg-background border border-border hover:border-primary/40 transition-all group"
                       >
                         <div className="space-y-1 min-w-0 pr-2">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="text-xs font-bold text-foreground truncate">
-                              {p.name || "N/A"}
+                              {p.name || "Unnamed Attendee"}
                             </span>
                             <Badge variant="outline" className="text-[10px] py-0 px-1.5 font-mono">
                               {p.email}
                             </Badge>
+                            {p.id && !p.id.startsWith("local-") && (
+                              <Badge variant="secondary" className="text-[9px] py-0 px-1 text-primary border-primary/20">
+                                DB Synced
+                              </Badge>
+                            )}
                           </div>
                           <div className="flex items-center gap-3 text-[11px] text-muted-foreground flex-wrap">
                             {p.phone && <span>📞 {p.phone}</span>}
@@ -779,18 +1096,40 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                           )}
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveProfile(idx)}
-                          className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 opacity-60 group-hover:opacity-100 transition-all cursor-pointer"
-                          title="Remove profile"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditProfile(p, idx)}
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all cursor-pointer"
+                            title="Edit profile"
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveProfile(idx)}
+                            className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer"
+                            title="Remove profile"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}
                 </div>
+
+                {matrixProfiles.length > 0 && (
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={handleClearAllProfiles}
+                      className="text-[11px] text-muted-foreground hover:text-rose-500 cursor-pointer"
+                    >
+                      Clear all profiles
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -894,7 +1233,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Pairs {targetUrlsList.length} target forms with {matrixProfiles.length} attendee profiles with humanized keystrokes & anti-bot evasion.
+                    Pairs {targetUrlsList.length} target forms with {matrixProfiles.length} attendee profiles using randomized typing delays & anti-bot evasion.
                   </p>
                 </div>
 
@@ -1009,16 +1348,42 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
         )}
 
         {/* ================================================================== */}
-        {/* TAB 2: SINGLE FORM STUDIO (Existing Focused Mode)                 */}
+        {/* TAB 2: SINGLE FORM STUDIO (Focused Single-Target Execution)        */}
         {/* ================================================================== */}
         {activeTab === "single" && (
           <div className="space-y-6">
-            {/* Target URL Input */}
+            {/* Target URL Input & Inspection Controls */}
             <div className="bg-card border border-border rounded-2xl p-4 sm:p-5 shadow-2xs space-y-4">
-              <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
-                <Globe className="w-3.5 h-3.5 text-primary" />
-                Target Web Form URL
-              </label>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                  <Globe className="w-3.5 h-3.5 text-primary" />
+                  Target Web Form URL
+                </label>
+                {events.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">From Events:</span>
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          setTargetUrl(e.target.value);
+                          handleInspect(e.target.value);
+                        }
+                      }}
+                      defaultValue=""
+                      className="bg-background border border-border rounded-lg px-2 py-1 text-xs text-foreground outline-none focus:border-primary"
+                    >
+                      <option value="" disabled>
+                        Pick saved event...
+                      </option>
+                      {events.map((ev) => (
+                        <option key={ev.id} value={ev.url}>
+                          {ev.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
 
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
                 <div className="relative flex-1 w-full">
@@ -1026,7 +1391,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                     type="url"
                     value={targetUrl}
                     onChange={(e) => setTargetUrl(e.target.value)}
-                    placeholder="https://mowli.in/ or https://example.com/contact"
+                    placeholder="https://example.com/form or https://mowli.in/"
                     className="w-full bg-background border border-border rounded-xl px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/60 outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all font-mono text-xs sm:text-sm"
                   />
                 </div>
@@ -1040,7 +1405,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                   {isInspecting ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin text-primary" />
-                      <span>Inspecting...</span>
+                      <span>Inspecting DOM...</span>
                     </>
                   ) : (
                     <>
@@ -1059,7 +1424,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                   {isSingleLaunching ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Launching...</span>
+                      <span>Running...</span>
                     </>
                   ) : (
                     <>
@@ -1070,22 +1435,46 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 </button>
               </div>
 
-              {/* Quick Presets */}
-              <div className="flex items-center gap-2 pt-1 flex-wrap">
-                <span className="text-xs text-muted-foreground">Quick Presets:</span>
-                {presets.map((preset) => (
+              {/* Saved Form Templates Bar */}
+              <div className="flex items-center justify-between flex-wrap gap-2 pt-1 border-t border-border/50">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Bookmark className="w-3 h-3 text-primary" />
+                    <span>Saved Templates:</span>
+                  </span>
+                  {savedTemplates.length === 0 ? (
+                    <span className="text-xs text-muted-foreground/60 italic">No saved templates yet.</span>
+                  ) : (
+                    savedTemplates.map((tpl) => (
+                      <div
+                        key={tpl.id}
+                        onClick={() => handleLoadTemplate(tpl)}
+                        className="group flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-muted/60 hover:bg-muted text-foreground border border-border/60 transition-colors cursor-pointer"
+                      >
+                        <span className="font-medium">{tpl.name}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteTemplate(tpl.id, e)}
+                          className="text-muted-foreground hover:text-rose-500 transition-colors"
+                          title="Delete template"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {targetUrl.trim() && (
                   <button
-                    key={preset.url}
-                    onClick={() => {
-                      setTargetUrl(preset.url);
-                      handleInspect(preset.url);
-                    }}
-                    className="text-xs px-2.5 py-1 rounded-lg bg-muted/60 hover:bg-muted text-foreground/80 hover:text-foreground border border-border/60 transition-colors flex items-center gap-1.5 cursor-pointer"
+                    type="button"
+                    onClick={() => setShowSaveTemplateModal(true)}
+                    className="text-xs text-primary hover:underline font-semibold flex items-center gap-1 cursor-pointer"
                   >
-                    <Zap className="w-3 h-3 text-primary" />
-                    {preset.label}
+                    <Save className="w-3 h-3" />
+                    <span>Save Current as Template</span>
                   </button>
-                ))}
+                )}
               </div>
 
               {inspectError && (
@@ -1115,58 +1504,134 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
 
             {/* Single Form Payload Form & Detected DOM Table */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Form Payload Config */}
+              {/* Dynamic Form Payload Config with Full Field CRUD */}
               <div className="lg:col-span-6 bg-card border border-border rounded-2xl p-5 shadow-2xs space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-2">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                     <User className="w-4 h-4 text-primary" />
-                    <span>Submission Payload</span>
+                    <span>Submission Payload ({Object.keys(formData).length} Fields)</span>
                   </h3>
-                  <Badge variant="outline" className="text-[10px]">
-                    Semantic Auto-Mapping
-                  </Badge>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddFieldForm(!showAddFieldForm)}
+                    className="px-2.5 py-1 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Custom Field</span>
+                  </button>
                 </div>
 
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-xs font-medium text-foreground">Name</label>
-                    <input
-                      type="text"
-                      value={formData.name || ""}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs sm:text-sm text-foreground outline-none focus:border-primary"
-                    />
+                {/* Autofill From Team Roster Dropdown */}
+                {attendees.length > 0 && (
+                  <div className="flex items-center gap-2 p-2.5 rounded-xl bg-muted/40 border border-border">
+                    <span className="text-xs text-muted-foreground shrink-0 flex items-center gap-1">
+                      <Users className="w-3.5 h-3.5 text-primary" />
+                      <span>Autofill:</span>
+                    </span>
+                    <select
+                      onChange={(e) => {
+                        if (e.target.value) handleAutofillFromAttendee(e.target.value);
+                      }}
+                      defaultValue=""
+                      className="w-full bg-background border border-border rounded-lg px-2.5 py-1 text-xs text-foreground outline-none focus:border-primary"
+                    >
+                      <option value="" disabled>
+                        Select member to autofill matching payload fields...
+                      </option>
+                      {attendees.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.email})
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                )}
 
-                  <div>
-                    <label className="text-xs font-medium text-foreground">Email</label>
-                    <input
-                      type="email"
-                      value={formData.email || ""}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs sm:text-sm text-foreground outline-none focus:border-primary"
-                    />
+                {/* Add Custom Field Inline Box */}
+                {showAddFieldForm && (
+                  <div className="p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
+                    <div className="text-xs font-bold text-foreground">Add New Payload Field</div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        placeholder="Field key (e.g. linkedin, city, why_join)"
+                        value={newFieldKey}
+                        onChange={(e) => setNewFieldKey(e.target.value)}
+                        className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs text-foreground outline-none focus:border-primary"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Field value"
+                        value={newFieldValue}
+                        onChange={(e) => setNewFieldValue(e.target.value)}
+                        className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs text-foreground outline-none focus:border-primary"
+                      />
+                    </div>
+                    <div className="flex items-center justify-end gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowAddFieldForm(false)}
+                        className="px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleAddCustomField}
+                        disabled={!newFieldKey.trim()}
+                        className="px-3 py-1 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 disabled:opacity-50"
+                      >
+                        Add to Payload
+                      </button>
+                    </div>
                   </div>
+                )}
 
-                  <div>
-                    <label className="text-xs font-medium text-foreground">Phone</label>
-                    <input
-                      type="text"
-                      value={formData.phone || ""}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                      className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs sm:text-sm text-foreground outline-none focus:border-primary"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-xs font-medium text-foreground">Message</label>
-                    <textarea
-                      value={formData.message || ""}
-                      onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                      rows={3}
-                      className="w-full bg-background border border-border rounded-xl p-3 text-xs sm:text-sm text-foreground outline-none focus:border-primary resize-none"
-                    />
-                  </div>
+                {/* Field Pairs Inputs */}
+                <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
+                  {Object.keys(formData).length === 0 ? (
+                    <div className="p-6 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground">
+                      No fields configured. Inspect a form to auto-detect fields or add custom fields.
+                    </div>
+                  ) : (
+                    Object.entries(formData).map(([key, val]) => (
+                      <div key={key} className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-foreground capitalize flex items-center gap-1.5">
+                            <span>{key.replace(/_/g, " ")}</span>
+                            <span className="text-[10px] font-mono text-muted-foreground lowercase">
+                              ({key})
+                            </span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveField(key)}
+                            className="text-muted-foreground hover:text-rose-500 p-1 text-xs transition-colors cursor-pointer"
+                            title="Remove this field"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                        {key === "message" || key === "pitch" || key.includes("question") || key.includes("about") ? (
+                          <textarea
+                            value={val}
+                            onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
+                            rows={3}
+                            placeholder={`Enter ${key.replace(/_/g, " ")}...`}
+                            className="w-full bg-background border border-border rounded-xl p-3 text-xs sm:text-sm text-foreground outline-none focus:border-primary resize-y"
+                          />
+                        ) : (
+                          <input
+                            type={key.includes("email") ? "email" : "text"}
+                            value={val}
+                            onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
+                            placeholder={`Enter ${key.replace(/_/g, " ")}...`}
+                            className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs sm:text-sm text-foreground outline-none focus:border-primary"
+                          />
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -1175,20 +1640,20 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                     <Sparkles className="w-4 h-4 text-primary" />
-                    <span>Detected DOM Schema</span>
+                    <span>Detected Form DOM Schema</span>
                   </h3>
                   {inspectionResult && (
                     <Badge variant="secondary" className="text-[10px] font-mono">
-                      {inspectionResult.fields.length} Fields Found
+                      {inspectionResult.fields.length} Fields Detected
                     </Badge>
                   )}
                 </div>
 
                 {!inspectionResult ? (
-                  <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground space-y-2">
+                  <div className="flex flex-col items-center justify-center p-8 text-center text-muted-foreground space-y-2 border border-dashed border-border rounded-xl">
                     <Search className="w-8 h-8 opacity-40 text-primary" />
                     <p className="text-xs">
-                      Click "Inspect Form" above to extract interactive DOM inputs without hardcoded selectors.
+                      Enter a URL and click "Inspect Form" to analyze input fields, select boxes, and checkboxes in real-time.
                     </p>
                   </div>
                 ) : (
@@ -1206,7 +1671,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                             tag: {f.tag} | type: {f.type || "text"} | name: {f.name || "N/A"}
                           </div>
                         </div>
-                        <Badge variant="outline" className="text-[10px] shrink-0">
+                        <Badge variant="outline" className="text-[10px] shrink-0 font-mono">
                           {f.suggestedKey || "custom"}
                         </Badge>
                       </div>
@@ -1218,16 +1683,20 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
           </div>
         )}
 
-        {/* Modal: Add Custom Person Profile */}
-        {showAddProfileModal && (
+        {/* ================================================================== */}
+        {/* MODAL: Add / Edit Person Profile (Full CRUD with Database Sync)    */}
+        {/* ================================================================== */}
+        {showProfileModal && (
           <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-xs flex items-center justify-center p-4">
             <div className="bg-card border border-border rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl">
               <div className="flex items-center justify-between pb-2 border-b border-border">
-                <h3 className="text-sm font-bold text-foreground">Add Attendee Profile</h3>
+                <h3 className="text-sm font-bold text-foreground">
+                  {editingProfileIndex !== null ? "Edit Attendee Profile" : "Add Attendee Profile"}
+                </h3>
                 <button
                   type="button"
-                  onClick={() => setShowAddProfileModal(false)}
-                  className="text-muted-foreground hover:text-foreground text-xs cursor-pointer"
+                  onClick={() => setShowProfileModal(false)}
+                  className="text-muted-foreground hover:text-foreground text-xs cursor-pointer p-1"
                 >
                   ✕
                 </button>
@@ -1238,10 +1707,11 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                   <label className="font-medium text-foreground">Full Name *</label>
                   <input
                     type="text"
-                    value={newProfile.name}
-                    onChange={(e) => setNewProfile({ ...newProfile, name: e.target.value })}
-                    placeholder="Aswin Vishal"
+                    value={profileForm.name}
+                    onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
+                    placeholder="Enter full name"
                     className="w-full mt-1 bg-background border border-border rounded-lg px-3 py-2 text-foreground outline-none focus:border-primary"
+                    required
                   />
                 </div>
 
@@ -1249,74 +1719,188 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                   <label className="font-medium text-foreground">Email Address *</label>
                   <input
                     type="email"
-                    value={newProfile.email}
-                    onChange={(e) => setNewProfile({ ...newProfile, email: e.target.value })}
-                    placeholder="aswinvishal402@gmail.com"
+                    value={profileForm.email}
+                    onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
+                    placeholder="name@example.com"
                     className="w-full mt-1 bg-background border border-border rounded-lg px-3 py-2 text-foreground outline-none focus:border-primary"
+                    required
                   />
                 </div>
 
                 <div>
                   <label className="font-medium text-foreground">Phone Number</label>
                   <input
-                    type="text"
-                    value={newProfile.phone}
-                    onChange={(e) => setNewProfile({ ...newProfile, phone: e.target.value })}
-                    placeholder="9384514564"
+                    type="tel"
+                    value={profileForm.phone || ""}
+                    onChange={(e) => setProfileForm({ ...profileForm, phone: e.target.value })}
+                    placeholder="Phone number"
                     className="w-full mt-1 bg-background border border-border rounded-lg px-3 py-2 text-foreground outline-none focus:border-primary"
                   />
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="font-medium text-foreground">Company</label>
+                    <label className="font-medium text-foreground">Company / Organization</label>
                     <input
                       type="text"
-                      value={newProfile.company}
-                      onChange={(e) => setNewProfile({ ...newProfile, company: e.target.value })}
-                      placeholder="Celestialabs"
+                      value={profileForm.company || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, company: e.target.value })}
+                      placeholder="Organization name"
                       className="w-full mt-1 bg-background border border-border rounded-lg px-3 py-2 text-foreground outline-none focus:border-primary"
                     />
                   </div>
                   <div>
-                    <label className="font-medium text-foreground">Role</label>
+                    <label className="font-medium text-foreground">Role / Title</label>
                     <input
                       type="text"
-                      value={newProfile.role}
-                      onChange={(e) => setNewProfile({ ...newProfile, role: e.target.value })}
-                      placeholder="Developer"
+                      value={profileForm.role || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, role: e.target.value })}
+                      placeholder="Title or role"
                       className="w-full mt-1 bg-background border border-border rounded-lg px-3 py-2 text-foreground outline-none focus:border-primary"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="font-medium text-foreground">Custom Message / Notes</label>
+                  <label className="font-medium text-foreground">Custom Message / Bio / Pitch</label>
                   <textarea
-                    value={newProfile.message}
-                    onChange={(e) => setNewProfile({ ...newProfile, message: e.target.value })}
+                    value={profileForm.message || ""}
+                    onChange={(e) => setProfileForm({ ...profileForm, message: e.target.value })}
                     rows={2}
-                    placeholder="Hello, excited to connect!"
+                    placeholder="Enter custom message or pitch to submit in forms..."
                     className="w-full mt-1 bg-background border border-border rounded-lg p-2.5 text-foreground outline-none focus:border-primary resize-none"
                   />
                 </div>
+
+                {/* Database Sync Option */}
+                <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={syncProfileToDatabase}
+                    onChange={(e) => setSyncProfileToDatabase(e.target.checked)}
+                    className="rounded border-border text-primary focus:ring-primary h-4 w-4"
+                  />
+                  <span className="text-muted-foreground">
+                    Save to Team Roster Database (persistent across sessions)
+                  </span>
+                </label>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
                 <button
                   type="button"
-                  onClick={() => setShowAddProfileModal(false)}
+                  onClick={() => setShowProfileModal(false)}
                   className="px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={handleSaveNewProfile}
-                  disabled={!newProfile.name || !newProfile.email}
+                  onClick={handleSaveProfile}
+                  disabled={!profileForm.name.trim() || !profileForm.email.trim()}
                   className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 disabled:opacity-50 cursor-pointer shadow-2xs"
                 >
-                  Save Profile
+                  {editingProfileIndex !== null ? "Update Profile" : "Save Profile"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================== */}
+        {/* MODAL: Edit Target URL                                             */}
+        {/* ================================================================== */}
+        {editingUrlIndex !== null && (
+          <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-card border border-border rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-xl">
+              <div className="flex items-center justify-between pb-2 border-b border-border">
+                <h3 className="text-sm font-bold text-foreground">
+                  Edit Target URL #{editingUrlIndex + 1}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setEditingUrlIndex(null)}
+                  className="text-muted-foreground hover:text-foreground text-xs cursor-pointer p-1"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <label className="font-medium text-foreground">Target URL</label>
+                <input
+                  type="url"
+                  value={editingUrlValue}
+                  onChange={(e) => setEditingUrlValue(e.target.value)}
+                  placeholder="https://example.com/form"
+                  className="w-full bg-background border border-border rounded-xl p-3 text-xs sm:text-sm font-mono text-foreground outline-none focus:border-primary"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setEditingUrlIndex(null)}
+                  className="px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEditUrl}
+                  disabled={!editingUrlValue.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 disabled:opacity-50 shadow-2xs"
+                >
+                  Update Target URL
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ================================================================== */}
+        {/* MODAL: Save Form Template                                          */}
+        {/* ================================================================== */}
+        {showSaveTemplateModal && (
+          <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="bg-card border border-border rounded-2xl max-w-sm w-full p-5 space-y-3 shadow-xl">
+              <div className="flex items-center justify-between pb-2 border-b border-border">
+                <h3 className="text-sm font-bold text-foreground">Save Form Template</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowSaveTemplateModal(false)}
+                  className="text-muted-foreground hover:text-foreground text-xs cursor-pointer p-1"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-2 text-xs">
+                <label className="font-medium text-foreground">Template Name</label>
+                <input
+                  type="text"
+                  value={templateNameInput}
+                  onChange={(e) => setTemplateNameInput(e.target.value)}
+                  placeholder="e.g. Mowli Contact Form, Waitlist V1"
+                  className="w-full bg-background border border-border rounded-lg px-3 py-2 text-foreground outline-none focus:border-primary text-xs"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+                <button
+                  type="button"
+                  onClick={() => setShowSaveTemplateModal(false)}
+                  className="px-3 py-1.5 rounded-lg text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveTemplate}
+                  disabled={!templateNameInput.trim()}
+                  className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 disabled:opacity-50 shadow-2xs"
+                >
+                  Save Template
                 </button>
               </div>
             </div>

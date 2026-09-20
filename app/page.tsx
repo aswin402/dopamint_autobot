@@ -302,6 +302,8 @@ export default function Home() {
         return "Team Roster";
       case "sheets":
         return "Google Sheets Sync";
+      case "form_runner":
+        return "Universal Form Studio";
       default:
         return "Dopamint Autonomous Agent";
     }
@@ -376,10 +378,12 @@ export default function Home() {
           {activeTab === "form_runner" && (
             <UniversalFormStudio
               attendees={attendees}
+              events={events}
+              onRefreshData={fetchEventsData}
               isVisualMode={isVisualMode}
               onToggleVisualMode={toggleVisualMode}
               onLaunchSuccess={() => {
-                // Poll/refresh status
+                fetchEventsData();
               }}
             />
           )}
