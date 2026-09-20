@@ -322,6 +322,9 @@ export default function Home() {
           {activeTab === "chat" && (
             <ChatGPTView
               onTriggerAutomation={handleStartAutomation}
+              onPauseAutomation={handlePauseAutomation}
+              onResumeAutomation={handleResumeAutomation}
+              onStopAutomation={handleStopAutomation}
               attendees={attendees}
               events={events}
               refreshData={fetchEventsData}

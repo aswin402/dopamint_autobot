@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { AutomationMonitorPanel } from "./AutomationMonitorPanel";
 
 interface Attachment {
   id: string;
@@ -42,6 +43,9 @@ interface Message {
 
 interface ChatGPTViewProps {
   onTriggerAutomation?: (eventIds?: number[]) => void;
+  onPauseAutomation?: () => void;
+  onResumeAutomation?: () => void;
+  onStopAutomation?: () => void;
   attendees: any[];
   events: any[];
   refreshData: () => void;
@@ -75,6 +79,9 @@ const PROMPT_SUGGESTIONS = [
 
 export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
   onTriggerAutomation,
+  onPauseAutomation,
+  onResumeAutomation,
+  onStopAutomation,
   attendees,
   events,
   refreshData,
@@ -231,9 +238,11 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] w-full max-w-4xl mx-auto px-4 relative">
-      {/* Messages Scroll Area or Welcome Hero */}
-      <div className="flex-1 overflow-y-auto py-6 space-y-6 scroll-smooth">
+    <div className="flex-1 flex h-[calc(100vh-4rem)] w-full min-w-0 overflow-hidden relative">
+      {/* Center Chat Workspace */}
+      <div className="flex-1 flex flex-col h-full min-w-0 px-4 md:px-6 max-w-4xl mx-auto w-full relative overflow-hidden">
+        {/* Messages Scroll Area or Welcome Hero */}
+        <div className="flex-1 overflow-y-auto py-6 space-y-6 scroll-smooth">
         {messages.length === 0 ? (
           /* Welcome Hero (ChatGPT style) */
           <div className="h-full flex flex-col items-center justify-center text-center max-w-xl mx-auto px-4 py-8 space-y-6">
@@ -491,6 +500,17 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
           Dopamint AI Co-Pilot is grounded in real-time attendee data, forms, and SQLite state.
         </p>
       </div>
+      </div>
+
+      {/* Right-Side End Menu Bar: Live Automation Monitor */}
+      <AutomationMonitorPanel
+        onStartAutomation={() => onTriggerAutomation?.()}
+        onPauseAutomation={onPauseAutomation}
+        onResumeAutomation={onResumeAutomation}
+        onStopAutomation={onStopAutomation}
+        isVisualMode={isVisualMode}
+        onToggleVisualMode={onToggleVisualMode}
+      />
     </div>
   );
 };

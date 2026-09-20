@@ -20,6 +20,9 @@ import {
   Check,
   AlertTriangle,
   Terminal,
+  Link2,
+  Save,
+  Sparkles,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -80,6 +83,12 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
   const [deleteConfirmConfig, setDeleteConfirmConfig] = useState<SheetConfigItem | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Quick Switcher State for changing spreadsheet directly
+  const [quickUrl, setQuickUrl] = useState("");
+  const [quickTab, setQuickTab] = useState("Registrations");
+  const [isSavingQuick, setIsSavingQuick] = useState(false);
+  const [quickMessage, setQuickMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   // Fetch configs
   const fetchConfigs = async () => {
     setIsLoading(true);
@@ -88,6 +97,11 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
       const data = await res.json();
       if (data.configs) {
         setConfigs(data.configs);
+        const active = data.configs.find((c: SheetConfigItem) => c.isActive) || data.configs[0];
+        if (active) {
+          setQuickUrl(active.spreadsheetUrl);
+          setQuickTab(active.sheetName || "Registrations");
+        }
       }
     } catch (err) {
       console.error("Failed to load sheet configurations:", err);
@@ -99,6 +113,55 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
   useEffect(() => {
     fetchConfigs();
   }, []);
+
+  const handleQuickSwitch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickUrl.trim()) {
+      setQuickMessage({ type: "error", text: "Please enter a valid Google Spreadsheet URL" });
+      return;
+    }
+    setIsSavingQuick(true);
+    setQuickMessage(null);
+    try {
+      const active = configs.find((c) => c.isActive) || configs[0];
+      if (active) {
+        const res = await fetch(`/api/sheets/configs/${active.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            spreadsheetUrl: quickUrl.trim(),
+            sheetName: quickTab.trim() || "Registrations",
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to update spreadsheet target");
+      } else {
+        const res = await fetch("/api/sheets/configs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: "Primary Registration Sheet",
+            spreadsheetUrl: quickUrl.trim(),
+            sheetName: quickTab.trim() || "Registrations",
+            syncDirection: "two_way",
+            autoSync: false,
+            frequency: "manual",
+            isActive: true,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to create spreadsheet connection");
+      }
+
+      setQuickMessage({ type: "success", text: "Active Google Spreadsheet updated successfully!" });
+      await fetchConfigs();
+      setTimeout(() => setQuickMessage(null), 4500);
+    } catch (err: any) {
+      setQuickMessage({ type: "error", text: err.message || "Failed to update spreadsheet" });
+    } finally {
+      setIsSavingQuick(false);
+    }
+  };
 
   const handleOpenCreate = () => {
     setModalMode("create");
@@ -254,6 +317,94 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
           </Button>
         </div>
       </div>
+
+      {/* Quick Switch Primary Spreadsheet Card */}
+      <Card className="rounded-3xl border border-primary/20 bg-primary/[0.03] shadow-xs">
+        <CardContent className="p-5">
+          <form onSubmit={handleQuickSwitch} className="space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                  <Link2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                    <span>Active Target Spreadsheet URL</span>
+                    <Badge variant="outline" className="text-[10px] font-medium border-primary/30 text-primary">
+                      Live Target
+                    </Badge>
+                  </h3>
+                  <p className="text-[11px] text-muted-foreground">
+                    Paste a new Google Sheets URL here to switch the automation synchronization target.
+                  </p>
+                </div>
+              </div>
+
+              {quickUrl && quickUrl.startsWith("http") && (
+                <a
+                  href={quickUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-medium shrink-0"
+                >
+                  <span>Open in Google Sheets</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </div>
+
+            <div className="flex flex-col md:flex-row items-stretch md:items-center gap-2 pt-1">
+              <div className="relative flex-1">
+                <input
+                  type="url"
+                  value={quickUrl}
+                  onChange={(e) => setQuickUrl(e.target.value)}
+                  placeholder="https://docs.google.com/spreadsheets/d/your-sheet-id/edit#gid=0"
+                  className="w-full text-xs rounded-xl border border-border bg-card px-3 py-2.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary shadow-2xs font-mono"
+                  required
+                />
+              </div>
+
+              <div className="w-full md:w-44 shrink-0">
+                <input
+                  type="text"
+                  value={quickTab}
+                  onChange={(e) => setQuickTab(e.target.value)}
+                  placeholder="Tab name (e.g. Registrations)"
+                  className="w-full text-xs rounded-xl border border-border bg-card px-3 py-2.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary shadow-2xs"
+                />
+              </div>
+
+              <Button
+                type="submit"
+                disabled={isSavingQuick}
+                size="sm"
+                className="rounded-xl text-xs gap-1.5 bg-primary text-primary-foreground hover:opacity-90 cursor-pointer shadow-2xs shrink-0 py-2.5 h-auto"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{isSavingQuick ? "Updating..." : "Switch Spreadsheet"}</span>
+              </Button>
+            </div>
+
+            {quickMessage && (
+              <div
+                className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 animate-in fade-in duration-200 ${
+                  quickMessage.type === "success"
+                    ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20"
+                    : "bg-destructive/10 text-destructive border border-destructive/20"
+                }`}
+              >
+                {quickMessage.type === "success" ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                ) : (
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                )}
+                <span>{quickMessage.text}</span>
+              </div>
+            )}
+          </form>
+        </CardContent>
+      </Card>
 
       {/* 2. Connected Sheets Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

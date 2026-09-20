@@ -31,6 +31,38 @@ export async function POST(req: NextRequest) {
 
     const lastMsg = messages[messages.length - 1]?.content || "";
 
+    // Handle Google Sheets switch / update directly from chat
+    const sheetMatch = lastMsg.match(/https:\/\/docs\.google\.com\/spreadsheets\/d\/[a-zA-Z0-9-_]+/i);
+    if (sheetMatch && (/sheet|spreadsheet|sync|track|url|link/i.test(lastMsg) || /change|set|use|update|switch/i.test(lastMsg))) {
+      const newUrl = sheetMatch[0];
+      const active = await prisma.sheetConfig.findFirst({ where: { isActive: true } });
+      if (active) {
+        await prisma.sheetConfig.update({
+          where: { id: active.id },
+          data: { spreadsheetUrl: newUrl, lastStatus: "ready", lastMessage: "Updated via Chat Assistant" },
+        });
+      } else {
+        await prisma.sheetConfig.create({
+          data: {
+            name: "Primary Registration Sheet",
+            spreadsheetUrl: newUrl,
+            sheetName: "Registrations",
+            syncDirection: "two_way",
+            autoSync: false,
+            frequency: "manual",
+            isActive: true,
+            lastStatus: "ready",
+            lastMessage: "Configured via Chat Assistant",
+          },
+        });
+      }
+      return NextResponse.json({
+        response: `📋 **Target Google Spreadsheet Updated!**\n\n- **New Spreadsheet URL:** [${newUrl}](${newUrl})\n- **Status:** Linked and set as active target\n\nThe automation engine and Google Sheets Sync deck are now pointed to this spreadsheet. Any batch registrations or attendee syncs will read/write to this document.`,
+        actionTaken: "updated_spreadsheet",
+        spreadsheetUrl: newUrl,
+      });
+    }
+
     // Handle automation trigger commands directly
     if (
       /start|launch|register|run batch|run automation|begin/i.test(lastMsg) &&
