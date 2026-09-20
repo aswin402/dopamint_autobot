@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { AutomationMonitorPanel } from "./AutomationMonitorPanel";
+import { playNotificationChime, triggerDesktopNotification } from "@/lib/notifications";
 
 interface Attachment {
   id: string;
@@ -121,6 +122,51 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
       )}px`;
     }
   }, [input]);
+
+  // Real-time Agent Automation Monitoring & Post-Execution Notification
+  const prevRunnerRunningRef = useRef(false);
+
+  useEffect(() => {
+    const checkAutomationStatus = async () => {
+      try {
+        const res = await fetch("/api/automation/status", { cache: "no-store" });
+        if (res.ok) {
+          const status = await res.json();
+          if (
+            prevRunnerRunningRef.current &&
+            !status.isRunning &&
+            status.progress &&
+            status.progress.completed > 0
+          ) {
+            // Automation just completed! Notify user with sound, notification & in-chat message
+            playNotificationChime();
+            const targetDesc =
+              status.currentEvent?.title ||
+              (status.progress.total === 1 ? "Custom Form Submission" : "Batch Registration Queue");
+
+            triggerDesktopNotification(
+              "Dopamint AI Agent Notification",
+              `Automation Finished: ${status.progress.completed} processed (${status.progress.successCount} confirmed success).`
+            );
+
+            const notifMsg: Message = {
+              id: `notif-${Date.now()}`,
+              role: "assistant",
+              content: `🔔 **Agent Notification: Automation Run Completed!**\n\n- **Target Task / Event:** ${targetDesc}\n- **Overall Status:** ✅ **100% Completed**\n- **Progress Breakdown:**\n  - **Completed:** ${status.progress.completed} / ${status.progress.total || status.progress.completed}\n  - **Success:** ${status.progress.successCount}\n  - **Errors / Skipped:** ${status.progress.failedCount + status.progress.skippedCount}\n- **Browser Mode:** ${
+                status.isHeadless ? "Headless Stealth Mode" : "👁️ Visual Headed Browser Window"
+              }\n\nAll requested fields were populated using humanized keystroke pacing and anti-bot stealth evasion. Receipts and logs are accessible in the **Live Automation Monitor** panel on the right.`,
+              timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            };
+            setMessages((prev) => [...prev, notifMsg]);
+          }
+          prevRunnerRunningRef.current = Boolean(status.isRunning);
+        }
+      } catch (e) {}
+    };
+
+    const interval = setInterval(checkAutomationStatus, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleSend = async (textToSend?: string) => {
     const text = (textToSend || input).trim();

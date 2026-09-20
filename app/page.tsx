@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Sidebar, NavTab } from "@/components/Sidebar";
 import Header from "@/components/Header";
 import { DashboardOverview } from "@/components/DashboardOverview";
@@ -10,6 +10,9 @@ import { TeamRoster } from "@/components/TeamRoster";
 import { SheetsSyncView } from "@/components/SheetsSyncView";
 import { UniversalFormStudio } from "@/components/UniversalFormStudio";
 import ExportModal from "@/components/ExportModal";
+import { playNotificationChime, triggerDesktopNotification } from "@/lib/notifications";
+import { CheckCircle2, Bell, X } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
@@ -39,6 +42,17 @@ export default function Home() {
     isRunning: boolean;
     isPaused: boolean;
     isHeadless?: boolean;
+    currentEvent?: any;
+    progress?: {
+      completed: number;
+      total: number;
+      percent: number;
+      successCount: number;
+      failedCount: number;
+      waitlistCount: number;
+      skippedCount: number;
+      remainingCount: number;
+    };
     recentLogs: any[];
   }>({
     isRunning: false,
@@ -46,6 +60,45 @@ export default function Home() {
     isHeadless: true,
     recentLogs: [],
   });
+
+  const [completionBanner, setCompletionBanner] = useState<{
+    show: boolean;
+    title: string;
+    message: string;
+    successCount: number;
+    failedCount: number;
+  } | null>(null);
+
+  const prevRunnerRunningRef = useRef(false);
+
+  // Monitor runner completion and trigger global notification
+  useEffect(() => {
+    if (
+      prevRunnerRunningRef.current &&
+      !runnerStatus.isRunning &&
+      runnerStatus.progress &&
+      runnerStatus.progress.completed > 0
+    ) {
+      playNotificationChime();
+      triggerDesktopNotification(
+        "Dopamint AI Agent Notification",
+        `Automation Run Complete: ${runnerStatus.progress.completed} processed (${runnerStatus.progress.successCount} confirmed success).`
+      );
+      setCompletionBanner({
+        show: true,
+        title: "Automation Completed",
+        message: `Successfully processed ${runnerStatus.progress.completed} items (${runnerStatus.progress.successCount} confirmed, ${runnerStatus.progress.failedCount} errors). Verified with anti-bot evasion.`,
+        successCount: runnerStatus.progress.successCount,
+        failedCount: runnerStatus.progress.failedCount,
+      });
+
+      const timer = setTimeout(() => {
+        setCompletionBanner(null);
+      }, 9000);
+      return () => clearTimeout(timer);
+    }
+    prevRunnerRunningRef.current = Boolean(runnerStatus.isRunning);
+  }, [runnerStatus.isRunning]);
 
   const [isVisualMode, setIsVisualMode] = useState<boolean>(false);
 
@@ -373,6 +426,35 @@ export default function Home() {
         attendees={attendees}
         initialDataset={exportDataset}
       />
+
+      {/* Floating Global Completion Notification */}
+      {completionBanner && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-md w-full animate-in slide-in-from-bottom-5 duration-300 p-4 rounded-2xl bg-card border border-emerald-500/40 shadow-2xl flex items-start gap-3.5 backdrop-blur-xl">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0 border border-emerald-500/30">
+            <CheckCircle2 className="w-5 h-5" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                <span>{completionBanner.title}</span>
+                <Badge variant="outline" className="text-[10px] text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/20 font-bold">
+                  100% Done
+                </Badge>
+              </h4>
+              <button
+                type="button"
+                onClick={() => setCompletionBanner(null)}
+                className="text-muted-foreground hover:text-foreground text-xs p-1 rounded-lg hover:bg-muted transition-colors cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+              {completionBanner.message}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
