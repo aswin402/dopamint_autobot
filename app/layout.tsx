@@ -17,8 +17,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Onpkg Next.js Template",
-  description: "Modern full-stack starter template with Next.js, Bun, Tailwind CSS v4, Shadcn UI, and Prisma",
+  title: "Dopamint AutoBot — Autonomous Operations Deck",
+  description: "Dopamint AutoBot Autonomous Event Registration Platform & MiniMax AI Co-Pilot",
 };
 
 export default function RootLayout({

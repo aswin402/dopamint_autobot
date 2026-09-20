@@ -1,15 +1,14 @@
 "use client";
 
 import React from "react";
-import { Bot, Sparkles, ExternalLink, Play, Pause, RefreshCw } from "lucide-react";
+import { Sparkles, RefreshCw, ExternalLink, Activity, User, CheckCircle2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 interface HeaderProps {
-  metrics: {
-    totalEvents: number;
-    totalAttendees: number;
-    totalConfirmed: number;
-    completionRate: number;
-  };
+  activeTitle: string;
+  subtitle?: string;
+  selectedAttendeeName?: string;
   runnerStatus: {
     isRunning: boolean;
     isPaused: boolean;
@@ -19,100 +18,70 @@ interface HeaderProps {
 }
 
 export default function Header({
-  metrics,
+  activeTitle,
+  subtitle,
+  selectedAttendeeName,
   runnerStatus,
   onSyncSheets,
   isSyncingSheets,
 }: HeaderProps) {
   return (
-    <header className="h-16 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur-md px-6 flex items-center justify-between z-30 sticky top-0">
-      {/* Brand & Identity */}
+    <header className="h-16 border-b border-border bg-card/80 backdrop-blur-md px-6 flex items-center justify-between z-20 sticky top-0 transition-colors">
+      {/* Breadcrumb / Title */}
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
-          <Bot className="w-6 h-6 text-white" />
-        </div>
         <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
-              Dopamint AutoBot
-              <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                AaaS v1.0
-              </span>
-            </h1>
-          </div>
-          <p className="text-xs text-slate-400">
-            Autonomous Web Form & Event Registration Engine
-          </p>
+          <h1 className="text-sm md:text-base font-bold tracking-tight text-foreground flex items-center gap-2">
+            <span>{activeTitle}</span>
+            {runnerStatus.isRunning && (
+              <Badge variant="success" className="animate-pulse">
+                {runnerStatus.isPaused ? "Paused" : "Runner Active"}
+              </Badge>
+            )}
+          </h1>
+          {subtitle && (
+            <p className="text-xs text-muted-foreground hidden sm:block">
+              {subtitle}
+            </p>
+          )}
         </div>
       </div>
 
-      {/* Model & System Health Badges */}
-      <div className="hidden md:flex items-center gap-3">
-        {/* Model Indicator */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300">
-          <Sparkles className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-          <span>Model:</span>
-          <span className="font-semibold text-indigo-300">MiniMax-Text-01</span>
+      {/* Center / Right controls */}
+      <div className="flex items-center gap-2.5">
+        {/* Active Attendee Indicator */}
+        {selectedAttendeeName && (
+          <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-muted/60 border border-border text-xs text-foreground font-medium">
+            <User className="w-3.5 h-3.5 text-primary" />
+            <span className="text-muted-foreground">Attendee:</span>
+            <span className="font-semibold text-foreground truncate max-w-[140px]">
+              {selectedAttendeeName}
+            </span>
+          </div>
+        )}
+
+        {/* Live MiniMax Engine Pill */}
+        <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-accent text-primary border border-primary/20 text-xs font-semibold">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>MiniMax M2.5</span>
         </div>
 
-        {/* Hono Backend Indicator */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-          <span>Backend:</span>
-          <span className="font-semibold text-emerald-300">Hono :4000</span>
-        </div>
-
-        {/* Runner Status Pill */}
-        <div
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium ${
-            runnerStatus.isRunning
-              ? runnerStatus.isPaused
-                ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
-                : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
-              : "bg-slate-900 border-slate-800 text-slate-400"
-          }`}
-        >
-          <span
-            className={`w-2 h-2 rounded-full ${
-              runnerStatus.isRunning
-                ? runnerStatus.isPaused
-                  ? "bg-amber-400"
-                  : "bg-emerald-400 animate-ping"
-                : "bg-slate-500"
-            }`}
-          />
-          <span>
-            {runnerStatus.isRunning
-              ? runnerStatus.isPaused
-                ? "Paused"
-                : "Automation Active"
-              : "Engine Idle"}
-          </span>
-        </div>
-
-        {/* Google Sheet Direct Link & Sync Button */}
-        <button
+        {/* Google Sheets Sync Button */}
+        <Button
+          variant="outline"
+          size="sm"
           onClick={onSyncSheets}
           disabled={isSyncingSheets}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-xs text-slate-200 transition-all cursor-pointer disabled:opacity-50"
+          className="rounded-xl text-xs gap-1.5 h-8 border-border bg-card hover:bg-muted text-foreground"
         >
           <RefreshCw
-            className={`w-3.5 h-3.5 text-emerald-400 ${
+            className={`w-3.5 h-3.5 text-primary ${
               isSyncingSheets ? "animate-spin" : ""
             }`}
           />
-          <span>{isSyncingSheets ? "Syncing..." : "Sync Sheet"}</span>
-        </button>
-
-        <a
-          href="https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit?usp=sharing"
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-xs text-emerald-400 transition-all font-medium"
-        >
-          <ExternalLink className="w-3.5 h-3.5" />
-          <span>Live Spreadsheet</span>
-        </a>
+          <span className="hidden sm:inline">
+            {isSyncingSheets ? "Syncing..." : "Sync Sheets"}
+          </span>
+        </Button>
       </div>
     </header>
   );

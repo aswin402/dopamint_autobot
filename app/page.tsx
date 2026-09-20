@@ -1,19 +1,30 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { Sidebar, NavTab } from "@/components/Sidebar";
 import Header from "@/components/Header";
-import ChatPanel from "@/components/ChatPanel";
+import { DashboardOverview } from "@/components/DashboardOverview";
 import AutomationDeck from "@/components/AutomationDeck";
+import { ChatGPTView } from "@/components/ChatGPTView";
+import { TeamRoster } from "@/components/TeamRoster";
+import { SheetsSyncView } from "@/components/SheetsSyncView";
 
 export default function Home() {
+  const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
+  const [activeDeckTab, setActiveDeckTab] = useState<"matrix" | "logs" | "nonsubmitted">("matrix");
+
   const [attendees, setAttendees] = useState<any[]>([]);
   const [events, setEvents] = useState<any[]>([]);
+  const [selectedAttendeeId, setSelectedAttendeeId] = useState<string>("");
+
   const [metrics, setMetrics] = useState({
     totalEvents: 148,
     totalAttendees: 6,
     totalConfirmed: 688,
+    totalWaitlisted: 42,
     completionRate: 99,
   });
+
   const [runnerStatus, setRunnerStatus] = useState<{
     isRunning: boolean;
     isPaused: boolean;
@@ -23,9 +34,32 @@ export default function Home() {
     isPaused: false,
     recentLogs: [],
   });
-  const [activeTab, setActiveTab] = useState<"matrix" | "logs" | "nonsubmitted" | "team">("matrix");
+
+  const [recentRegistrations, setRecentRegistrations] = useState<any[]>([]);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
   const [isSyncingSheets, setIsSyncingSheets] = useState(false);
+  const [syncResult, setSyncResult] = useState<any>(null);
+  const [honoStatus, setHonoStatus] = useState<"online" | "offline" | "checking">("checking");
+
+  // Check Hono backend health
+  const checkHonoHealth = async () => {
+    try {
+      const res = await fetch("http://localhost:4000/health", {
+        cache: "no-store",
+      }).catch(() => null);
+      if (res && res.ok) {
+        setHonoStatus("online");
+      } else {
+        // Test proxy
+        const proxyRes = await fetch("/api/automation/status", {
+          cache: "no-store",
+        }).catch(() => null);
+        setHonoStatus(proxyRes && proxyRes.ok ? "online" : "offline");
+      }
+    } catch {
+      setHonoStatus("offline");
+    }
+  };
 
   // Fetch initial data
   const fetchEventsData = async () => {
@@ -36,7 +70,40 @@ export default function Home() {
       if (data.events) {
         setEvents(data.events);
         setAttendees(data.attendees || []);
-        if (data.metrics) setMetrics(data.metrics);
+        if (data.attendees && data.attendees.length > 0 && !selectedAttendeeId) {
+          setSelectedAttendeeId(data.attendees[0].id);
+        }
+
+        // Build recent registrations
+        const recents: any[] = [];
+        for (const ev of data.events) {
+          if (ev.registrations && ev.registrations.length > 0) {
+            for (const r of ev.registrations) {
+              const att = data.attendees?.find((a: any) => a.id === r.attendeeId);
+              recents.push({
+                id: r.id || `${ev.id}-${r.attendeeId}`,
+                eventId: ev.id,
+                eventTitle: ev.title,
+                attendeeName: att?.name || "Team Member",
+                status: r.status,
+                createdAt: r.createdAt || new Date().toISOString(),
+              });
+            }
+          }
+        }
+        setRecentRegistrations(recents);
+
+        // Count confirmed & waitlisted
+        const confirmed = recents.filter((r) => r.status === "confirmed_success").length;
+        const waitlisted = recents.filter((r) => r.status === "waitlist_joined").length;
+
+        setMetrics({
+          totalEvents: data.events.length,
+          totalAttendees: (data.attendees || []).length,
+          totalConfirmed: confirmed,
+          totalWaitlisted: waitlisted,
+          completionRate: data.events.length > 0 ? Math.round((confirmed / data.events.length) * 100) : 0,
+        });
       }
     } catch (e) {
       console.error("Failed to load events data:", e);
@@ -49,23 +116,46 @@ export default function Home() {
   const fetchRunnerStatus = async () => {
     try {
       const res = await fetch("/api/automation/status");
-      const data = await res.json();
-      setRunnerStatus(data);
+      if (res.ok) {
+        const data = await res.json();
+        setRunnerStatus(data);
+      }
     } catch (e) {}
   };
 
   useEffect(() => {
     fetchEventsData();
     fetchRunnerStatus();
-    const interval = setInterval(fetchRunnerStatus, 3000);
-    return () => clearInterval(interval);
+    checkHonoHealth();
+
+    const runnerInterval = setInterval(fetchRunnerStatus, 2500);
+    const healthInterval = setInterval(checkHonoHealth, 10000);
+
+    return () => {
+      clearInterval(runnerInterval);
+      clearInterval(healthInterval);
+    };
   }, []);
 
-  const handleStartAutomation = async () => {
+  const handleStartAutomation = async (eventIds?: number[]) => {
     try {
-      await fetch("/api/automation/start", { method: "POST" });
+      const payload: any = {};
+      if (eventIds && eventIds.length > 0) {
+        payload.eventIds = eventIds;
+      }
+      if (selectedAttendeeId) {
+        payload.attendeeIds = [selectedAttendeeId];
+      }
+
+      await fetch("/api/automation/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
       fetchRunnerStatus();
-      setActiveTab("logs");
+      setActiveTab("automations");
+      setActiveDeckTab("logs");
     } catch (e) {
       alert("Failed to start automation");
     }
@@ -97,57 +187,123 @@ export default function Home() {
     try {
       const res = await fetch("/api/sheets/sync", { method: "POST" });
       const data = await res.json();
-      if (data.success) {
-        alert("🎉 Google Sheets synchronized successfully!");
-      } else {
-        alert(`Sync error: ${data.error || "Unknown"}`);
-      }
+      setSyncResult(data);
     } catch (e: any) {
-      alert(`Sync error: ${e.message}`);
+      setSyncResult({
+        success: false,
+        message: e.message || "Failed to trigger sheets sync",
+      });
     } finally {
       setIsSyncingSheets(false);
     }
   };
 
+  const selectedAttendee = attendees.find((a) => a.id === selectedAttendeeId);
+
+  const getActiveTabTitle = () => {
+    switch (activeTab) {
+      case "dashboard":
+        return "Dashboard Overview";
+      case "automations":
+        return "Form Automation Deck";
+      case "chat":
+        return "AI Assistant & Co-Pilot";
+      case "team":
+        return "Team Roster";
+      case "sheets":
+        return "Google Sheets Sync";
+      default:
+        return "Dopamint AutoBot";
+    }
+  };
+
   return (
-    <div className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
-      {/* Top Navigation Bar */}
-      <Header
-        metrics={metrics}
-        runnerStatus={runnerStatus}
-        onSyncSheets={handleSyncSheets}
-        isSyncingSheets={isSyncingSheets}
+    <div className="flex h-screen w-screen max-w-[100vw] bg-background text-foreground overflow-hidden antialiased font-sans transition-colors duration-200">
+      {/* 1. Left Minimalist Collapsible Sidebar */}
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        honoStatus={honoStatus}
+        activeJobRunning={runnerStatus.isRunning}
+        onNewTask={() => {
+          setActiveTab("chat");
+        }}
       />
 
-      {/* Main Workspace Split Layout */}
-      <main className="flex-1 flex flex-col md:flex-row overflow-hidden">
-        {/* Left Side: Conversational Chat & File Ingestion (38%) */}
-        <div className="w-full md:w-[38%] h-[50vh] md:h-full shrink-0">
-          <ChatPanel
-            onStartAutomation={handleStartAutomation}
-            onSyncSheets={handleSyncSheets}
-            onSelectTab={setActiveTab}
-          />
-        </div>
+      {/* 2. Main Workspace Canvas */}
+      <div className="flex-1 flex flex-col h-full min-w-0 bg-background relative overflow-hidden">
+        {/* Top Header */}
+        <Header
+          activeTitle={getActiveTabTitle()}
+          subtitle="Dopamint Autonomous Form Engine • MiniMax M2.5 Grounded"
+          selectedAttendeeName={selectedAttendee?.name}
+          runnerStatus={runnerStatus}
+          onSyncSheets={handleSyncSheets}
+          isSyncingSheets={isSyncingSheets}
+        />
 
-        {/* Right Side: Automation Control Deck & Real-Time Matrix (62%) */}
-        <div className="flex-1 h-[50vh] md:h-full overflow-hidden">
-          <AutomationDeck
-            attendees={attendees}
-            events={events}
-            metrics={metrics}
-            runnerStatus={runnerStatus}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            onStartAutomation={handleStartAutomation}
-            onPauseAutomation={handlePauseAutomation}
-            onResumeAutomation={handleResumeAutomation}
-            onStopAutomation={handleStopAutomation}
-            onRefreshEvents={fetchEventsData}
-            isLoadingEvents={isLoadingEvents}
-          />
-        </div>
-      </main>
+        {/* Dynamic Center Canvas */}
+        <main className="flex-1 flex flex-col h-[calc(100vh-4rem)] min-w-0 overflow-hidden relative">
+          {activeTab === "dashboard" && (
+            <DashboardOverview
+              metrics={metrics}
+              attendees={attendees}
+              events={events}
+              recentRegistrations={recentRegistrations}
+              onNavigateTab={(tab) => {
+                setActiveTab(tab);
+                if (tab === "automations") setActiveDeckTab("matrix");
+              }}
+              onSelectAttendee={(id) => setSelectedAttendeeId(id)}
+              selectedAttendeeId={selectedAttendeeId}
+            />
+          )}
+
+          {activeTab === "automations" && (
+            <AutomationDeck
+              attendees={attendees}
+              events={events}
+              metrics={metrics}
+              runnerStatus={runnerStatus}
+              activeDeckTab={activeDeckTab}
+              setActiveDeckTab={setActiveDeckTab}
+              onStartAutomation={handleStartAutomation}
+              onPauseAutomation={handlePauseAutomation}
+              onResumeAutomation={handleResumeAutomation}
+              onStopAutomation={handleStopAutomation}
+              onRefreshEvents={fetchEventsData}
+              isLoadingEvents={isLoadingEvents}
+              selectedAttendeeId={selectedAttendeeId}
+            />
+          )}
+
+          {activeTab === "chat" && (
+            <ChatGPTView
+              onTriggerAutomation={handleStartAutomation}
+              attendees={attendees}
+              events={events}
+              refreshData={fetchEventsData}
+            />
+          )}
+
+          {activeTab === "team" && (
+            <TeamRoster
+              attendees={attendees}
+              refreshData={fetchEventsData}
+              selectedAttendeeId={selectedAttendeeId}
+              onSelectAttendee={(id) => setSelectedAttendeeId(id)}
+            />
+          )}
+
+          {activeTab === "sheets" && (
+            <SheetsSyncView
+              onSyncSheets={handleSyncSheets}
+              isSyncing={isSyncingSheets}
+              syncResult={syncResult}
+            />
+          )}
+        </main>
+      </div>
     </div>
   );
 }

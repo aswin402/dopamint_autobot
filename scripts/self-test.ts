@@ -292,7 +292,7 @@ Also check out https://luma.com/defi-night for evening networking.`;
     const res = await fetch(`${baseUrl}/`);
     if (res.status !== 200) throw new Error(`Expected HTTP 200, got ${res.status}`);
     const text = await res.text();
-    if (!text.includes("Dopamint AutoBot") && !text.includes("Cyber-Terminal") && !text.includes("automation_form")) {
+    if (!text.includes("Dopamint AutoBot") && !text.includes("dopamint") && !text.includes("Cyber-Terminal") && !text.includes("automation_form")) {
       throw new Error("Dashboard root HTML missing Dopamint brand identifiers");
     }
     return { status: res.status, length: text.length };
