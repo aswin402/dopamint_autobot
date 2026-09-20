@@ -1,0 +1,93 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Attendee {
+  id              String         @id @default(uuid())
+  name            String
+  firstName       String?
+  lastName        String?
+  email           String         @unique
+  phone           String?
+  company         String
+  role            String
+  telegram        String?
+  twitter         String?
+  linkedin        String?
+  website         String?
+  pitch           String?
+  gender          String?
+  country         String?        @default("South Korea")
+  wallets         String?        // JSON string: { "evm": "0x...", "solana": "...", "xrp": "..." }
+  metadata        String?        // JSON string for additional custom fields
+  registrations   Registration[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model Event {
+  id              Int            @id
+  title           String
+  url             String
+  date            String?
+  platform        String         @default("luma") // "luma", "eventbrite", "custom"
+  isLuma          Boolean        @default(true)
+  ticketText      String?
+  soldOut         Boolean        @default(false)
+  requireApproval Boolean        @default(false)
+  phoneRequired   String?        // "required", "optional", null
+  ethRequired     String?        // "required", "optional", null
+  solRequired     String?        // "required", "optional", null
+  questions       String?        // JSON array of scanned form questions & types
+  registrations   Registration[]
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model Registration {
+  id                    String    @id @default(uuid())
+  eventId               Int
+  event                 Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  attendeeId            String
+  attendee              Attendee  @relation(fields: [attendeeId], references: [id], onDelete: Cascade)
+  status                String    @default("queued") // queued, in_progress, confirmed_success, waitlist_joined, closed_by_host, custom_info_needed, failed
+  answersSubmitted      String?   // JSON string of submitted key-value pairs
+  serverStatus          Int?      // e.g. 200
+  screenshotUrl         String?   // Path to confirmation screenshot
+  failureReason         String?
+  confirmationTimestamp DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@unique([eventId, attendeeId])
+}
+
+model ChatMessage {
+  id          String   @id @default(uuid())
+  role        String   // "user", "assistant", "system"
+  content     String
+  attachments String?  // JSON array: [{ name: "kbw.xlsx", size: 1024, type: "spreadsheet", url: "..." }]
+  toolCalls   String?  // JSON array of invoked tools
+  createdAt   DateTime @default(now())
+}
+
+model AutomationJob {
+  id                  String   @id @default(uuid())
+  status              String   @default("idle") // idle, running, paused, completed, stopped
+  activeEventId       Int?
+  activeAttendeeEmail String?
+  totalTarget         Int      @default(0)
+  totalConfirmed      Int      @default(0)
+  totalFailed         Int      @default(0)
+  paceConfig          String   // JSON string of delay configurations
+  logs                String?  // Recent execution logs
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
