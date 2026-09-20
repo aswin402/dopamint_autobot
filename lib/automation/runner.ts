@@ -97,7 +97,9 @@ class AutomationRunner {
     this.activeJobId = `job_${Date.now()}`;
     this.log(`🚀 Starting batch registration: ${eventIds.length} events across ${attendeeIds.length} team members.`);
 
-    const profileDir = path.resolve(process.cwd(), ".browser-profile");
+    const profileDir = process.env.BROWSER_PROFILE_PATH
+      ? path.resolve(process.env.BROWSER_PROFILE_PATH)
+      : path.resolve(process.cwd(), ".browser-profile");
     if (!fs.existsSync(profileDir)) {
       fs.mkdirSync(profileDir, { recursive: true });
     }
