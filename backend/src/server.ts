@@ -784,30 +784,9 @@ app.post("/api/automation/inspect", async (c) => {
 // --------------------------------------------------------------------------
 app.get("/api/sheets/configs", async (c) => {
   try {
-    let configs = await prisma.sheetConfig.findMany({
+    const configs = await prisma.sheetConfig.findMany({
       orderBy: { createdAt: "asc" },
     });
-
-    if (configs.length === 0) {
-      const defaultUrl =
-        process.env.GOOGLE_SHEET_URL ||
-        "https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit?usp=sharing";
-      const defaultSheet = await prisma.sheetConfig.create({
-        data: {
-          id: "default-sheet-config",
-          name: "Main Registration Tracker",
-          spreadsheetUrl: defaultUrl,
-          sheetName: "Registrations",
-          syncDirection: "two_way",
-          autoSync: false,
-          frequency: "manual",
-          isActive: true,
-          lastStatus: "ready",
-          lastMessage: "Connected to Google Sheets",
-        },
-      });
-      configs = [defaultSheet];
-    }
 
     return c.json({ configs });
   } catch (err: any) {
@@ -895,19 +874,13 @@ app.post("/api/sheets/sync", async (c) => {
     }
 
     if (configsToSync.length === 0) {
-      const defaultUrl =
-        process.env.GOOGLE_SHEET_URL ||
-        "https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit?usp=sharing";
-      const created = await prisma.sheetConfig.create({
-        data: {
-          name: "Main Registration Tracker",
-          spreadsheetUrl: defaultUrl,
-          sheetName: "Registrations",
-          syncDirection: "two_way",
-          isActive: true,
+      return c.json(
+        {
+          error:
+            "No active Google Spreadsheet connection configured. Please add or link a spreadsheet first.",
         },
-      });
-      configsToSync.push(created);
+        400
+      );
     }
 
     const syncTargetUrl = configsToSync[0]?.spreadsheetUrl;

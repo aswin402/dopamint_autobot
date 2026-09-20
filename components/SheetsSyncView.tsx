@@ -95,13 +95,17 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
     try {
       const res = await fetch("/api/sheets/configs");
       const data = await res.json();
-      if (data.configs) {
+      if (data.configs && data.configs.length > 0) {
         setConfigs(data.configs);
         const active = data.configs.find((c: SheetConfigItem) => c.isActive) || data.configs[0];
         if (active) {
           setQuickUrl(active.spreadsheetUrl);
           setQuickTab(active.sheetName || "Registrations");
         }
+      } else {
+        setConfigs([]);
+        setQuickUrl("");
+        setQuickTab("Registrations");
       }
     } catch (err) {
       console.error("Failed to load sheet configurations:", err);
@@ -231,16 +235,31 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
 
   const handleDeleteConfig = async () => {
     if (!deleteConfirmConfig) return;
+    const deletedId = deleteConfirmConfig.id;
     setIsSubmitting(true);
     try {
-      const res = await fetch(`/api/sheets/configs/${deleteConfirmConfig.id}`, {
+      const res = await fetch(`/api/sheets/configs/${deletedId}`, {
         method: "DELETE",
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to delete configuration");
 
+      // Optimistically remove from state immediately
+      setConfigs((prev) => {
+        const remaining = prev.filter((c) => c.id !== deletedId);
+        if (remaining.length === 0) {
+          setQuickUrl("");
+          setQuickTab("Registrations");
+        } else if (!remaining.some((c) => c.spreadsheetUrl === quickUrl)) {
+          const first = remaining[0];
+          setQuickUrl(first.spreadsheetUrl);
+          setQuickTab(first.sheetName || "Registrations");
+        }
+        return remaining;
+      });
+
       setDeleteConfirmConfig(null);
-      fetchConfigs();
+      await fetchConfigs();
     } catch (err: any) {
       alert(err.message || "Failed to delete configuration");
     } finally {
@@ -330,12 +349,19 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
                 <div>
                   <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
                     <span>Active Target Spreadsheet URL</span>
-                    <Badge variant="outline" className="text-[10px] font-medium border-primary/30 text-primary">
-                      Live Target
+                    <Badge
+                      variant={configs.length > 0 ? "outline" : "secondary"}
+                      className={`text-[10px] font-medium ${
+                        configs.length > 0 ? "border-primary/30 text-primary" : "text-muted-foreground"
+                      }`}
+                    >
+                      {configs.length > 0 ? "Live Target" : "No Active Sheet"}
                     </Badge>
                   </h3>
                   <p className="text-[11px] text-muted-foreground">
-                    Paste a new Google Sheets URL here to switch the automation synchronization target.
+                    {configs.length > 0
+                      ? "Paste a new Google Sheets URL here to switch the automation synchronization target."
+                      : "Enter a Google Sheets URL below to connect a spreadsheet for automated synchronization."}
                   </p>
                 </div>
               </div>
@@ -359,7 +385,11 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
                   type="url"
                   value={quickUrl}
                   onChange={(e) => setQuickUrl(e.target.value)}
-                  placeholder="https://docs.google.com/spreadsheets/d/your-sheet-id/edit#gid=0"
+                  placeholder={
+                    configs.length > 0
+                      ? "https://docs.google.com/spreadsheets/d/your-sheet-id/edit#gid=0"
+                      : "Enter new Google Spreadsheet URL to connect..."
+                  }
                   className="w-full text-xs rounded-xl border border-border bg-card px-3 py-2.5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary shadow-2xs font-mono"
                   required
                 />
@@ -382,7 +412,13 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
                 className="rounded-xl text-xs gap-1.5 bg-primary text-primary-foreground hover:opacity-90 cursor-pointer shadow-2xs shrink-0 py-2.5 h-auto"
               >
                 <Save className="w-3.5 h-3.5" />
-                <span>{isSavingQuick ? "Updating..." : "Switch Spreadsheet"}</span>
+                <span>
+                  {isSavingQuick
+                    ? "Updating..."
+                    : configs.length > 0
+                    ? "Switch Spreadsheet"
+                    : "Connect Spreadsheet"}
+                </span>
               </Button>
             </div>
 
@@ -407,7 +443,30 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
       </Card>
 
       {/* 2. Connected Sheets Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {configs.length === 0 ? (
+        <Card className="rounded-3xl border border-dashed border-border bg-card/50 p-8 text-center shadow-2xs">
+          <CardContent className="flex flex-col items-center justify-center space-y-3 p-0">
+            <div className="w-12 h-12 rounded-2xl bg-muted flex items-center justify-center text-muted-foreground">
+              <FileSpreadsheet className="w-6 h-6" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-foreground">No Google Spreadsheets Connected</h3>
+              <p className="text-xs text-muted-foreground max-w-sm">
+                All spreadsheet connections have been removed. You can connect a new Google Spreadsheet above or click below to configure custom sync settings.
+              </p>
+            </div>
+            <Button
+              onClick={handleOpenCreate}
+              size="sm"
+              className="rounded-2xl gap-1.5 text-xs bg-primary text-primary-foreground hover:opacity-90 cursor-pointer shadow-xs mt-2"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Sheet Connection</span>
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {configs.map((config) => {
           const isThisSyncing = activeSyncingId === config.id;
           return (
@@ -547,7 +606,8 @@ export const SheetsSyncView: React.FC<SheetsSyncViewProps> = ({
             </Card>
           );
         })}
-      </div>
+        </div>
+      )}
 
       {/* 3. Sync Execution Output / Console */}
       {activeSyncResult && (

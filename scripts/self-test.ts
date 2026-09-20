@@ -164,26 +164,34 @@ async function main() {
     return { verified: true, joinedStatus: joined.status, joinedAttendee: joined.attendee.name, joinedEvent: joined.event.title };
   });
 
-  await runTest("Database", "SheetConfig ORM and default config presence", async () => {
-    let configs = await prisma.sheetConfig.findMany();
-    if (configs.length === 0) {
-      await prisma.sheetConfig.create({
-        data: {
-          id: "default-sheet-config",
-          name: "Primary Registration Sheet",
-          spreadsheetUrl: "https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit",
-          sheetName: "Registrations",
-          syncDirection: "two_way",
-          isActive: true,
-        },
-      });
-      configs = await prisma.sheetConfig.findMany();
+  await runTest("Database", "SheetConfig ORM lifecycle (create, read, and delete)", async () => {
+    const testId = `test_sheet_${Date.now()}`;
+    const created = await prisma.sheetConfig.create({
+      data: {
+        id: testId,
+        name: "Test Registration Sheet",
+        spreadsheetUrl: "https://docs.google.com/spreadsheets/d/test-sheet-id/edit",
+        sheetName: "Registrations",
+        syncDirection: "two_way",
+        isActive: true,
+      },
+    });
+    if (!created || created.id !== testId) {
+      throw new Error("Failed to create test SheetConfig");
     }
-    const active = configs.find((c) => c.isActive) || configs[0];
-    if (!active || !active.spreadsheetUrl) {
-      throw new Error("Missing active SheetConfig in database");
+
+    const fetched = await prisma.sheetConfig.findUnique({ where: { id: testId } });
+    if (!fetched || fetched.spreadsheetUrl !== created.spreadsheetUrl) {
+      throw new Error("Failed to retrieve created SheetConfig");
     }
-    return { activeSheetName: active.name, targetUrl: active.spreadsheetUrl };
+
+    await prisma.sheetConfig.delete({ where: { id: testId } });
+    const afterDelete = await prisma.sheetConfig.findUnique({ where: { id: testId } });
+    if (afterDelete !== null) {
+      throw new Error("Failed to delete test SheetConfig");
+    }
+
+    return { testConfigId: testId, verifiedLifecycle: true };
   });
 
   // ----------------------------------------------------------------------

@@ -7,28 +7,9 @@ const DEFAULT_URL =
 
 export async function GET(req: NextRequest) {
   try {
-    let configs = await prisma.sheetConfig.findMany({
+    const configs = await prisma.sheetConfig.findMany({
       orderBy: { createdAt: "asc" },
     });
-
-    // Auto-seed default sheet if empty
-    if (configs.length === 0) {
-      const defaultSheet = await prisma.sheetConfig.create({
-        data: {
-          id: "default-sheet-config",
-          name: "Main Registration Tracker",
-          spreadsheetUrl: DEFAULT_URL,
-          sheetName: "Registrations",
-          syncDirection: "two_way",
-          autoSync: false,
-          frequency: "manual",
-          isActive: true,
-          lastStatus: "ready",
-          lastMessage: "Connected to Google Sheets",
-        },
-      });
-      configs = [defaultSheet];
-    }
 
     return NextResponse.json({ configs });
   } catch (err: any) {

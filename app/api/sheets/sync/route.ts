@@ -26,20 +26,14 @@ export async function POST(req: NextRequest) {
     }
 
     if (configsToSync.length === 0) {
-      // Fallback: create default if none exist
-      const defaultUrl =
-        process.env.GOOGLE_SHEET_URL ||
-        "https://docs.google.com/spreadsheets/d/1EtPcPe6OHTPJy3xiDVTgHufC36_wZVbrBgCkpf8hoVM/edit?usp=sharing";
-      const created = await prisma.sheetConfig.create({
-        data: {
-          name: "Main Registration Tracker",
-          spreadsheetUrl: defaultUrl,
-          sheetName: "Registrations",
-          syncDirection: "two_way",
-          isActive: true,
+      return NextResponse.json(
+        {
+          success: false,
+          message:
+            "No active Google Spreadsheet connection configured. Please add or link a spreadsheet first.",
         },
-      });
-      configsToSync.push(created);
+        { status: 400 }
+      );
     }
 
     const scriptPath =
