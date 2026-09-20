@@ -8,6 +8,7 @@ import AutomationDeck from "@/components/AutomationDeck";
 import { ChatGPTView } from "@/components/ChatGPTView";
 import { TeamRoster } from "@/components/TeamRoster";
 import { SheetsSyncView } from "@/components/SheetsSyncView";
+import ExportModal from "@/components/ExportModal";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
@@ -17,12 +18,20 @@ export default function Home() {
   const [events, setEvents] = useState<any[]>([]);
   const [selectedAttendeeId, setSelectedAttendeeId] = useState<string>("");
 
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportDataset, setExportDataset] = useState<"matrix" | "confirmed" | "roster" | "events">("matrix");
+
+  const openExportModal = (dataset: "matrix" | "confirmed" | "roster" | "events" = "matrix") => {
+    setExportDataset(dataset);
+    setIsExportModalOpen(true);
+  };
+
   const [metrics, setMetrics] = useState({
-    totalEvents: 148,
-    totalAttendees: 6,
-    totalConfirmed: 688,
-    totalWaitlisted: 42,
-    completionRate: 99,
+    totalEvents: 0,
+    totalAttendees: 0,
+    totalConfirmed: 0,
+    totalWaitlisted: 0,
+    completionRate: 0,
   });
 
   const [runnerStatus, setRunnerStatus] = useState<{
@@ -269,6 +278,7 @@ export default function Home() {
           onToggleVisualMode={toggleVisualMode}
           onSyncSheets={handleSyncSheets}
           isSyncingSheets={isSyncingSheets}
+          onOpenExport={() => openExportModal("matrix")}
         />
 
         {/* Dynamic Center Canvas */}
@@ -305,6 +315,7 @@ export default function Home() {
               onRefreshEvents={fetchEventsData}
               isLoadingEvents={isLoadingEvents}
               selectedAttendeeId={selectedAttendeeId}
+              onOpenExport={openExportModal}
             />
           )}
 
@@ -326,6 +337,7 @@ export default function Home() {
               refreshData={fetchEventsData}
               selectedAttendeeId={selectedAttendeeId}
               onSelectAttendee={(id) => setSelectedAttendeeId(id)}
+              onOpenExport={() => openExportModal("roster")}
             />
           )}
 
@@ -338,6 +350,14 @@ export default function Home() {
           )}
         </main>
       </div>
+
+      <ExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        events={events}
+        attendees={attendees}
+        initialDataset={exportDataset}
+      />
     </div>
   );
 }

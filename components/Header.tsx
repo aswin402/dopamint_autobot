@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Sparkles, RefreshCw, ExternalLink, Activity, User, CheckCircle2, Eye, EyeOff } from "lucide-react";
+import { Sparkles, RefreshCw, ExternalLink, Activity, User, CheckCircle2, Eye, EyeOff, Download } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
@@ -18,6 +18,7 @@ interface HeaderProps {
   onToggleVisualMode?: () => void;
   onSyncSheets: () => void;
   isSyncingSheets: boolean;
+  onOpenExport?: () => void;
 }
 
 export default function Header({
@@ -29,6 +30,7 @@ export default function Header({
   onToggleVisualMode,
   onSyncSheets,
   isSyncingSheets,
+  onOpenExport,
 }: HeaderProps) {
   return (
     <header className="h-16 border-b border-border bg-card/80 backdrop-blur-md px-6 flex items-center justify-between z-20 sticky top-0 transition-colors">
@@ -111,6 +113,20 @@ export default function Header({
               </>
             )}
           </button>
+        )}
+
+        {/* Export Data Button */}
+        {onOpenExport && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onOpenExport}
+            className="rounded-xl text-xs gap-1.5 h-8 border-border bg-card hover:bg-muted text-foreground cursor-pointer"
+            title="Export registration matrix, confirmed passes, team roster, or events catalog"
+          >
+            <Download className="w-3.5 h-3.5 text-primary" />
+            <span className="hidden sm:inline">Export</span>
+          </Button>
         )}
 
         {/* Google Sheets Sync Button */}

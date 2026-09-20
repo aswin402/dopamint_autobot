@@ -89,9 +89,11 @@ app.get("/api/events", async (c) => {
 
     const totalEvents = events.length;
     let totalConfirmed = 0;
+    let totalWaitlisted = 0;
     events.forEach((ev) => {
       ev.registrations.forEach((r) => {
         if (r.status === "confirmed_success") totalConfirmed++;
+        if (r.status === "waitlist_joined") totalWaitlisted++;
       });
     });
 
@@ -102,6 +104,7 @@ app.get("/api/events", async (c) => {
         totalEvents,
         totalAttendees: attendees.length,
         totalConfirmed,
+        totalWaitlisted,
         totalPossibleSlots: totalEvents * attendees.length,
         completionRate:
           totalEvents > 0 && attendees.length > 0
@@ -112,6 +115,181 @@ app.get("/api/events", async (c) => {
   } catch (err: any) {
     console.error("[Hono] Events API error:", err);
     return c.json({ error: err.message || "Failed to fetch events" }, 500);
+  }
+});
+
+// --------------------------------------------------------------------------
+// Events CRUD API
+// --------------------------------------------------------------------------
+app.post("/api/events", async (c) => {
+  try {
+    const body = await c.req.json();
+    let { id, title, url, date, platform, soldOut } = body;
+    if (!title || !url) {
+      return c.json({ error: "Title and URL are required" }, 400);
+    }
+    if (!id) {
+      const maxEvent = await prisma.event.findFirst({ orderBy: { id: "desc" } });
+      id = (maxEvent?.id || 0) + 1;
+    } else {
+      id = Number(id);
+    }
+
+    const event = await prisma.event.create({
+      data: {
+        id,
+        title,
+        url,
+        date: date || "",
+        platform: platform || "luma",
+        soldOut: Boolean(soldOut),
+      },
+    });
+    return c.json({ success: true, event }, 201);
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to create event" }, 500);
+  }
+});
+
+app.put("/api/events/:id", async (c) => {
+  try {
+    const id = Number(c.req.param("id"));
+    const body = await c.req.json();
+    const { title, url, date, platform, soldOut } = body;
+
+    const event = await prisma.event.update({
+      where: { id },
+      data: {
+        title,
+        url,
+        date,
+        platform,
+        soldOut: soldOut !== undefined ? Boolean(soldOut) : undefined,
+      },
+    });
+    return c.json({ success: true, event });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to update event" }, 500);
+  }
+});
+
+app.delete("/api/events/:id", async (c) => {
+  try {
+    const id = Number(c.req.param("id"));
+    await prisma.registration.deleteMany({ where: { eventId: id } });
+    await prisma.event.delete({ where: { id } });
+    return c.json({ success: true, message: "Event and registrations deleted" });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to delete event" }, 500);
+  }
+});
+
+// --------------------------------------------------------------------------
+// Attendees CRUD API
+// --------------------------------------------------------------------------
+app.get("/api/attendees", async (c) => {
+  try {
+    const attendees = await prisma.attendee.findMany({
+      orderBy: { name: "asc" },
+      include: {
+        registrations: {
+          include: {
+            event: true,
+          },
+        },
+      },
+    });
+    return c.json({ attendees });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to fetch attendees" }, 500);
+  }
+});
+
+app.post("/api/attendees", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch } = body;
+    if (!name || !email) {
+      return c.json({ error: "Name and email are required" }, 400);
+    }
+    const attendee = await prisma.attendee.upsert({
+      where: { email },
+      update: { name, role, company, phone, telegram, twitter, linkedin, wallets, pitch },
+      create: { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch },
+    });
+    return c.json({ success: true, attendee }, 201);
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to create attendee" }, 500);
+  }
+});
+
+app.put("/api/attendees/:id", async (c) => {
+  try {
+    const id = c.req.param("id");
+    const body = await c.req.json();
+    const { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch } = body;
+
+    const attendee = await prisma.attendee.update({
+      where: { id },
+      data: { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch },
+    });
+    return c.json({ success: true, attendee });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to update attendee" }, 500);
+  }
+});
+
+app.delete("/api/attendees/:id", async (c) => {
+  try {
+    const id = c.req.param("id");
+    await prisma.registration.deleteMany({ where: { attendeeId: id } });
+    await prisma.attendee.delete({ where: { id } });
+    return c.json({ success: true, message: "Attendee and registrations deleted" });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to delete attendee" }, 500);
+  }
+});
+
+// --------------------------------------------------------------------------
+// Registration Overrides API
+// --------------------------------------------------------------------------
+app.post("/api/registrations/override", async (c) => {
+  try {
+    const body = await c.req.json();
+    const { eventId, attendeeId, status } = body;
+    if (!eventId || !attendeeId) {
+      return c.json({ error: "eventId and attendeeId are required" }, 400);
+    }
+    const numEventId = Number(eventId);
+    if (!status || status === "clear") {
+      await prisma.registration.deleteMany({
+        where: { eventId: numEventId, attendeeId },
+      });
+      return c.json({ success: true, message: "Registration cleared", status: null });
+    }
+
+    const existing = await prisma.registration.findFirst({
+      where: { eventId: numEventId, attendeeId },
+    });
+
+    let registration;
+    if (existing) {
+      registration = await prisma.registration.update({
+        where: { id: existing.id },
+        data: { status, updatedAt: new Date() },
+      });
+    } else {
+      registration = await prisma.registration.create({
+        data: {
+          eventId: numEventId,
+          attendeeId,
+          status,
+        },
+      });
+    }
+    return c.json({ success: true, registration });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to update registration status" }, 500);
   }
 });
 
@@ -384,12 +562,7 @@ app.post("/api/sheets/sync", async (c) => {
   try {
     const fs = require("fs");
     const scriptPath = process.env.SYNC_SHEETS_SCRIPT_PATH || path.resolve(process.cwd(), "scripts/sync-sheets.js");
-    const altScriptPath = "/home/aswin/luma-registration/sync_both_sheets.js";
-    const targetScript = fs.existsSync(scriptPath)
-      ? scriptPath
-      : fs.existsSync(altScriptPath)
-      ? altScriptPath
-      : null;
+    const targetScript = fs.existsSync(scriptPath) ? scriptPath : null;
 
     if (!targetScript) {
       return c.json({

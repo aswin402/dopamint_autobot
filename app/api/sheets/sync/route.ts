@@ -9,12 +9,7 @@ const execPromise = util.promisify(exec);
 export async function POST(req: NextRequest) {
   try {
     const scriptPath = process.env.SYNC_SHEETS_SCRIPT_PATH || path.resolve(process.cwd(), "scripts/sync-sheets.js");
-    const altScriptPath = "/home/aswin/luma-registration/sync_both_sheets.js";
-    const targetScript = fs.existsSync(scriptPath)
-      ? scriptPath
-      : fs.existsSync(altScriptPath)
-      ? altScriptPath
-      : null;
+    const targetScript = fs.existsSync(scriptPath) ? scriptPath : null;
 
     if (!targetScript) {
       return NextResponse.json({
