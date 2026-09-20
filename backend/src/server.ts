@@ -121,21 +121,92 @@ app.get("/api/events", async (c) => {
 app.post("/api/chat", async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { messages } = body;
+    const { messages, isVisualMode: clientVisualMode } = body;
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: "Invalid request. 'messages' array is required." }, 400);
     }
 
-    const [attendeesCount, eventsCount, confirmedRegs] = await Promise.all([
-      prisma.attendee.count(),
-      prisma.event.count(),
+    const lastMsg = messages[messages.length - 1]?.content || "";
+
+    const [attendees, openEvents, confirmedRegs] = await Promise.all([
+      prisma.attendee.findMany({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          company: true,
+          telegram: true,
+          twitter: true,
+          linkedin: true,
+          wallets: true,
+        },
+      }),
+      prisma.event.findMany({
+        where: {
+          soldOut: false,
+          url: { startsWith: "http" },
+        },
+        take: 15,
+      }),
       prisma.registration.count({ where: { status: "confirmed_success" } }),
     ]);
 
+    // Check if user specifically requested to start/launch/run registration
+    const isTriggerRequest =
+      /start|launch|register|run batch|begin registration|automate|fill form/i.test(lastMsg) &&
+      !/how to|can you explain|why|what is/i.test(lastMsg);
+
+    if (isTriggerRequest) {
+      // Find matching attendee
+      const lower = lastMsg.toLowerCase();
+      const matchedAttendee =
+        attendees.find((a) => {
+          const fullName = a.name.toLowerCase().trim();
+          if (fullName && lower.includes(fullName)) return true;
+          const firstName = fullName.split(/\s+/)[0];
+          if (firstName && firstName.length >= 3 && new RegExp(`\\b${firstName}\\b`, "i").test(lower)) return true;
+          if (a.email && lower.includes(a.email.toLowerCase())) return true;
+          return false;
+        }) ||
+        attendees.find((a) => a.email === "aswinvishal402@gmail.com") ||
+        attendees[0];
+
+      const isVisual =
+        clientVisualMode !== undefined
+          ? Boolean(clientVisualMode)
+          : /visual|watch|headed|live/i.test(lastMsg);
+
+      if (matchedAttendee && openEvents.length > 0) {
+        // Start the runner!
+        automationRunner.startBatch(
+          openEvents.map((e) => e.id),
+          [matchedAttendee.id],
+          DEFAULT_PACING,
+          { headless: !isVisual }
+        );
+
+        return c.json({
+          response: `🚀 **Live Automation Triggered for ${matchedAttendee.name}!**\n\n- **Target Attendee:** ${matchedAttendee.name} (\`${matchedAttendee.email}\`)\n- **Role & Company:** ${matchedAttendee.role} at ${matchedAttendee.company}\n- **Browser Mode:** ${
+            isVisual
+              ? "👁️ **Live Visual Window (Chromium Launched On-Screen with 150ms slowMo)**"
+              : "Headless Background Execution"
+          }\n- **Catalog:** ${openEvents.length} open events queued with 18s–26s anti-bot pacing.\n\n${
+            isVisual
+              ? "✨ Look at your desktop! The physical Chromium window has opened and is now filling registration forms live before your eyes."
+              : "The batch is running safely in the background."
+          }\n\nYou can also monitor live console output in the **Automation Deck → Live Terminal** tab!`,
+          actionTaken: "launched_automation",
+          triggered: true,
+          attendee: matchedAttendee,
+        });
+      }
+    }
+
     const contextData = {
-      attendeesCount,
-      eventsCount,
+      attendees,
+      eventsCount: openEvents.length,
       confirmedRegistrations: confirmedRegs,
       runnerStatus: automationRunner.getStatus(),
     };

@@ -173,6 +173,11 @@ class AutomationRunner {
             continue;
           }
 
+          if (!ev.url || !ev.url.startsWith("http")) {
+            this.log(`⏩ Event #${ev.id} (${ev.title}) has invalid or missing URL. Skipping.`, "warn");
+            continue;
+          }
+
           this.log(`▶ [${i + 1}/${events.length}] Event #${ev.id}: ${ev.title}`, "info");
 
           let isConfirmed = false;

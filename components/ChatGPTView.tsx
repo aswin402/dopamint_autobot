@@ -133,6 +133,7 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          isVisualMode,
           messages: [...messages, userMessage].map((m) => ({
             role: m.role,
             content: m.content,
@@ -145,6 +146,10 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
       }
 
       const data = await res.json();
+      if (data.triggered) {
+        refreshData();
+      }
+
       const isRegistrationIntent = /register|batch|automate|start|fill|run/i.test(text);
 
       const assistantMessage: Message = {
@@ -152,7 +157,7 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
         role: "assistant",
         content: data.response || "I have received your request.",
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        showActionButton: isRegistrationIntent,
+        showActionButton: !data.triggered && isRegistrationIntent,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
