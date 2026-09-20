@@ -314,6 +314,9 @@ export default function Home() {
               attendees={attendees}
               events={events}
               refreshData={fetchEventsData}
+              isVisualMode={isVisualMode}
+              onToggleVisualMode={toggleVisualMode}
+              selectedAttendeeName={selectedAttendee?.name}
             />
           )}
 

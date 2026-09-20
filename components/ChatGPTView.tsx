@@ -16,6 +16,9 @@ import {
   AlertCircle,
   RefreshCw,
   CornerDownLeft,
+  Play,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,20 +37,24 @@ interface Message {
   content: string;
   timestamp: string;
   attachments?: Attachment[];
+  showActionButton?: boolean;
 }
 
 interface ChatGPTViewProps {
-  onTriggerAutomation?: (eventIds: number[], attendeeIds: string[]) => void;
+  onTriggerAutomation?: (eventIds?: number[]) => void;
   attendees: any[];
   events: any[];
   refreshData: () => void;
+  isVisualMode?: boolean;
+  onToggleVisualMode?: () => void;
+  selectedAttendeeName?: string;
 }
 
 const PROMPT_SUGGESTIONS = [
   {
-    title: "Batch Registration",
-    desc: "Register Kameshwaran for upcoming AI & crypto side events",
-    prompt: "Register Kamesh for the top upcoming open Luma side events.",
+    title: "Live Batch Registration",
+    desc: "Register Aswin Vishal for upcoming side events and watch live",
+    prompt: "Start batch registration for Aswin Vishal across the upcoming open events in visual browser mode.",
   },
   {
     title: "Pipeline Status",
@@ -71,6 +78,9 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
   attendees,
   events,
   refreshData,
+  isVisualMode = false,
+  onToggleVisualMode,
+  selectedAttendeeName,
 }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -135,11 +145,14 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
       }
 
       const data = await res.json();
+      const isRegistrationIntent = /register|batch|automate|start|fill|run/i.test(text);
+
       const assistantMessage: Message = {
         id: `asst-${Date.now()}`,
         role: "assistant",
         content: data.response || "I have received your request.",
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        showActionButton: isRegistrationIntent,
       };
 
       setMessages((prev) => [...prev, assistantMessage]);
@@ -295,6 +308,49 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
                   }`}
                 >
                   <div className="whitespace-pre-wrap">{msg.content}</div>
+
+                  {msg.showActionButton && onTriggerAutomation && (
+                    <div className="mt-3.5 p-3.5 rounded-2xl bg-muted/70 border border-border/80 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                      <div className="space-y-0.5">
+                        <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-primary" />
+                          <span>Batch Automation Trigger Ready</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          Target: <strong className="text-foreground">{selectedAttendeeName || "Team"}</strong> • Mode:{" "}
+                          <span className={isVisualMode ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-foreground"}>
+                            {isVisualMode ? "👁️ Watch Live (Browser Window Pops Up)" : "Headless (Silent Background)"}
+                          </span>
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {onToggleVisualMode && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={onToggleVisualMode}
+                            className="rounded-xl text-xs gap-1.5 h-8 bg-card border-border"
+                            title="Toggle visual mode"
+                          >
+                            {isVisualMode ? (
+                              <Eye className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                            ) : (
+                              <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                            )}
+                            <span>{isVisualMode ? "Watch Live: ON" : "Watch Live: OFF"}</span>
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          onClick={() => onTriggerAutomation()}
+                          className="rounded-xl text-xs gap-1.5 font-semibold h-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs cursor-pointer"
+                        >
+                          <Play className="w-3.5 h-3.5" />
+                          <span>Launch Batch {isVisualMode ? "Live 👁️" : "Now"}</span>
+                        </Button>
+                      </div>
+                    </div>
+                  )}
 
                   {msg.role === "assistant" && (
                     <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
