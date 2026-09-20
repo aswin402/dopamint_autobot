@@ -73,10 +73,10 @@ export default function Header({
           </div>
         )}
 
-        {/* Live MiniMax Engine Pill */}
-        <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-accent text-primary border border-primary/20 text-xs font-semibold">
+        {/* Autonomous Agent Status Pill */}
+        <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-primary/10 text-primary border border-primary/20 text-xs font-semibold">
           <Sparkles className="w-3.5 h-3.5" />
-          <span>MiniMax M2.5</span>
+          <span>Agent Online</span>
         </div>
 
         {/* Watch Live Visual Browser Mode Switch */}

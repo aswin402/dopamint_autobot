@@ -243,13 +243,13 @@ export default function Home() {
       case "automations":
         return "Form Automation Deck";
       case "chat":
-        return "AI Assistant & Co-Pilot";
+        return "AI Agent Console";
       case "team":
         return "Team Roster";
       case "sheets":
         return "Google Sheets Sync";
       default:
-        return "Dopamint AutoBot";
+        return "Dopamint Autonomous Agent";
     }
   };
 
@@ -271,7 +271,7 @@ export default function Home() {
         {/* Top Header */}
         <Header
           activeTitle={getActiveTabTitle()}
-          subtitle="Dopamint Autonomous Form Engine • MiniMax M2.5 Grounded"
+          subtitle="Autonomous Form Filling & Bulk Registration Agent"
           selectedAttendeeName={selectedAttendee?.name}
           runnerStatus={runnerStatus}
           isVisualMode={isVisualMode}

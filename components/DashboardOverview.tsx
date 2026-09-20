@@ -50,19 +50,19 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         <div className="space-y-1.5 z-10">
           <div className="flex items-center gap-2">
             <Badge variant="olive" className="text-[11px]">
-              Dopamint Autobot v0.0.1
+              Autonomous Agent Platform
             </Badge>
             <span className="text-xs text-muted-foreground">•</span>
             <span className="text-xs text-muted-foreground">
-              Autonomous Operations Deck
+              AaaS Operations
             </span>
           </div>
           <h2 className="text-2xl font-bold tracking-tight text-foreground">
-            Event Registration Operations
+            Form Automation & Event Operations
           </h2>
           <p className="text-xs md:text-sm text-muted-foreground max-w-xl leading-relaxed">
-            Monitor registration batches, execute automated form submissions, and
-            interact with Dopamint AI Co-Pilot powered by MiniMax M2.5.
+            Delegate multi-platform form submissions, monitor autonomous registration batches, and
+            interact with your dedicated AI Agent Co-Pilot.
           </p>
         </div>
 
@@ -117,7 +117,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <div className="text-2xl font-bold text-foreground flex items-baseline gap-2">
               <span>{metrics.totalConfirmed}</span>
               <span className="text-xs font-medium text-emerald-600">
-                confirmed_success
+                Confirmed
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -138,7 +138,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
             <div className="text-2xl font-bold text-foreground flex items-baseline gap-2">
               <span>{metrics.totalWaitlisted}</span>
               <span className="text-xs font-medium text-amber-600">
-                waitlist_joined
+                Waitlisted
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
@@ -258,7 +258,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                       }
                       className="text-[11px]"
                     >
-                      {reg.status}
+                      {reg.status === "confirmed_success"
+                        ? "Confirmed"
+                        : reg.status === "waitlist_joined"
+                        ? "Waitlist"
+                        : reg.status === "in_progress"
+                        ? "In Progress"
+                        : reg.status === "failed"
+                        ? "Failed"
+                        : reg.status || "Queued"}
                     </Badge>
                   </div>
                 </div>

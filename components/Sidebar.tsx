@@ -88,12 +88,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className="flex flex-col">
                 <span className="font-bold text-sm tracking-tight text-foreground flex items-center gap-1.5">
                   dopamint
-                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-muted text-muted-foreground">
-                    v0.0.1
+                  <span className="text-[10px] font-medium px-1.5 py-0.2 rounded-full bg-primary/10 text-primary border border-primary/20">
+                    AaaS
                   </span>
                 </span>
                 <span className="text-[11px] text-muted-foreground font-medium">
-                  AutoBot Platform
+                  Autonomous Agent
                 </span>
               </div>
             )}
@@ -161,28 +161,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </nav>
       </div>
 
-      {/* Bottom Section: Backend Status & Theme */}
-      <div className="space-y-2 pt-4 border-t border-border">
-        {/* Engine status indicator */}
+      {/* Bottom Section: Agent Status & Theme */}
+      <div className="space-y-2 pt-3 border-t border-border">
+        {/* Agent Operational Status */}
         <div
-          className={`flex items-center gap-2 p-2 rounded-xl text-xs ${
-            honoStatus === "online"
-              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-              : "bg-amber-500/10 text-amber-700 dark:text-amber-300"
-          } ${isCollapsed ? "justify-center" : ""}`}
+          className={`flex items-center gap-2.5 p-2 rounded-xl text-xs bg-muted/40 border border-border/50 ${
+            isCollapsed ? "justify-center" : ""
+          }`}
         >
-          <Activity
-            className={`w-4 h-4 flex-shrink-0 ${
-              honoStatus === "online" ? "animate-pulse" : ""
-            }`}
-          />
+          <div className="relative flex items-center justify-center">
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+            <div className="absolute w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping opacity-75" />
+          </div>
           {!isCollapsed && (
             <div className="flex flex-col min-w-0">
-              <span className="font-semibold text-[11px] truncate">
-                Hono Engine :4000
+              <span className="font-semibold text-[11px] text-foreground truncate">
+                Autonomous Agent
               </span>
-              <span className="text-[10px] opacity-80">
-                {honoStatus === "online" ? "Connected & Ready" : "Checking..."}
+              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">
+                Operational & Ready
               </span>
             </div>
           )}

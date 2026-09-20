@@ -172,7 +172,7 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
       const errorMessage: Message = {
         id: `err-${Date.now()}`,
         role: "assistant",
-        content: `⚠️ Failed to get AI response: ${err.message || "Network error"}. Please ensure the Hono backend is running on port 4000.`,
+        content: `⚠️ Unable to connect to the agent service: ${err.message || "Network error"}. Please verify your connection or try again.`,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
       setMessages((prev) => [...prev, errorMessage]);
@@ -405,7 +405,7 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
             </div>
             <div className="px-4 py-3 rounded-2xl bg-card border border-border rounded-tl-sm flex items-center gap-2 text-xs text-muted-foreground">
               <Sparkles className="w-3.5 h-3.5 text-primary animate-pulse" />
-              <span>MiniMax is reasoning...</span>
+              <span>Agent is thinking...</span>
             </div>
           </div>
         )}
@@ -497,7 +497,7 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
         </div>
 
         <p className="text-center text-[10px] text-muted-foreground/70 mt-2">
-          Dopamint AI Co-Pilot is grounded in real-time attendee data, forms, and SQLite state.
+          Autonomous Form Agent is grounded in real-time attendee profiles, target events, and live browser automation.
         </p>
       </div>
       </div>
