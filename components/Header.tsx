@@ -55,6 +55,13 @@ export default function Header({
           <span className="font-semibold text-indigo-300">MiniMax-Text-01</span>
         </div>
 
+        {/* Hono Backend Indicator */}
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <span>Backend:</span>
+          <span className="font-semibold text-emerald-300">Hono :4000</span>
+        </div>
+
         {/* Runner Status Pill */}
         <div
           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-medium ${

@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { forwardToHono } from "@/lib/backend-proxy";
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const filter = searchParams.get("filter") || "all"; // all, confirmed, pending, sold_out
+    const filter = searchParams.get("filter") || "all";
     const search = searchParams.get("search") || "";
+
+    // 1. Try forwarding to decoupled Hono backend
+    const queryString = searchParams.toString();
+    const honoRes = await forwardToHono(`/api/events${queryString ? `?${queryString}` : ""}`);
+    if (honoRes && honoRes.ok) {
+      const data = await honoRes.json();
+      return NextResponse.json(data);
+    }
+
+    // 2. Local fallback if Hono is offline
 
     const attendees = await prisma.attendee.findMany({
       orderBy: { name: "asc" },

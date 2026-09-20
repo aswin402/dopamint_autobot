@@ -2,12 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { streamAgentChat, AgentChatMessage } from "@/lib/ai/minimax";
 import prisma from "@/lib/prisma";
 import automationRunner from "@/lib/automation/runner";
+import { forwardToHono } from "@/lib/backend-proxy";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { messages, command } = body;
 
+    // 1. Try forwarding to decoupled Hono backend
+    const honoRes = await forwardToHono("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (honoRes && honoRes.ok) {
+      const data = await honoRes.json();
+      return NextResponse.json(data);
+    }
+
+    // 2. Fallback to local execution if Hono is offline
     if (!messages || !Array.isArray(messages)) {
       return NextResponse.json(
         { error: "Invalid request. 'messages' array is required." },

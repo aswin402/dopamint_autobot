@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Authored Engineering Implementation Plan ([`implementationplan.md`](implementationplan.md)).
   - Authored Live Project Task Tracker ([`todo.md`](todo.md)).
 
+- **Decoupled High-Performance Hono Backend ([`backend/src/server.ts`](backend/src/server.ts))**:
+  - Scaffolded dedicated backend microservice using `onpkg template use hono-api`.
+  - Standalone service running on port 4000 with native CORS and HTTP logging.
+  - Implemented `/health`, `/api/events`, `/api/chat`, `/api/upload`, `/api/automation/*`, and `/api/sheets/sync`.
+  - Added Next.js server-side transparent gateway proxying ([`lib/backend-proxy.ts`](lib/backend-proxy.ts)) with offline fallback.
+  - Added visual live Hono status pill in Cyber-Terminal header.
+
 - **Universal Multi-Format Ingestion Engine ([`lib/parsers/index.ts`](lib/parsers/index.ts))**:
   - Full support for `.xlsx` and `.xls` workbooks via `xlsx`.
   - Full support for `.csv` and `.tsv` files via `papaparse`.

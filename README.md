@@ -135,17 +135,17 @@ Verify the entire system passes all automated self-tests:
 npm test
 ```
 
-### 6. Start the Server
+### 6. Start the System (Decoupled Architecture)
 ```bash
-# Production Build & Start
-npm run build
-npm run start
+# Terminal 1: Start Hono Backend (Port 4000)
+npm run backend
 
-# Or Development Mode
-npm run dev
+# Terminal 2: Start Next.js Cyber-Terminal (Port 3000)
+npm run start   # (or npm run dev)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+- **Next.js Dashboard:** [http://localhost:3000](http://localhost:3000)
+- **Hono Backend API:** [http://localhost:4000](http://localhost:4000) (Health check: `/health`)
 
 ---
 
