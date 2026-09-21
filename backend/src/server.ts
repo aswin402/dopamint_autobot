@@ -45,6 +45,7 @@ app.get("/", (c) => {
       "/api/automation/pause",
       "/api/automation/resume",
       "/api/automation/stop",
+      "/api/automation/interact",
       "/api/sheets/sync",
     ],
   });
@@ -683,6 +684,16 @@ app.post("/api/automation/stop", (c) => {
     message: "Automation runner stopped",
     status: automationRunner.getStatus(),
   });
+});
+
+app.post("/api/automation/interact", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const result = await automationRunner.handleHumanInteraction(body);
+    return c.json(result);
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
 });
 
 app.post("/api/automation/custom", async (c) => {

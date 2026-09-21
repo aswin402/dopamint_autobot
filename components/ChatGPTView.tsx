@@ -293,7 +293,7 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
       {/* Center Chat Workspace */}
       <div className="flex-1 flex flex-col h-full min-w-0 px-4 md:px-6 max-w-4xl mx-auto w-full relative overflow-hidden">
         {/* Messages Scroll Area or Welcome Hero */}
-        <div className="flex-1 overflow-y-auto py-6 space-y-6 scroll-smooth">
+        <div className="flex-1 overflow-y-auto py-6 space-y-6 scroll-smooth sleek-scrollbar pr-1">
         {messages.length === 0 ? (
           /* Welcome Hero (ChatGPT style) */
           <div className="h-full flex flex-col items-center justify-center text-center max-w-xl mx-auto px-4 py-8 space-y-6">

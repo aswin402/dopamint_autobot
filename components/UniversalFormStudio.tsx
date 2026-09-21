@@ -39,10 +39,12 @@ import {
   Database,
   Copy,
   X,
+  Tv,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { DetectedField, InspectionResult } from "@/lib/automation/runner";
 import { playNotificationChime, triggerDesktopNotification } from "@/lib/notifications";
+import { LiveBrowserScreen } from "./LiveBrowserScreen";
 
 export interface AttendeeProfile {
   id?: string;
@@ -81,8 +83,32 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   onToggleVisualMode,
   onLaunchSuccess,
 }) => {
-  // Active Tab: "matrix" ($N$ URLs × $M$ People) or "single" (Focused Form Studio)
-  const [activeTab, setActiveTab] = useState<"matrix" | "single">("matrix");
+  // Active Tab: "matrix" ($N$ URLs × $M$ People), "single" (Focused Form Studio), or "live" (Inbuilt Live Browser)
+  const [activeTab, setActiveTab] = useState<"matrix" | "single" | "live">("matrix");
+  const [runnerStatus, setRunnerStatus] = useState<any>(null);
+
+  // Poll automation runner status for tab indicators and live screens
+  useEffect(() => {
+    let isMounted = true;
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch("/api/automation/status", { cache: "no-store" });
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted) {
+            setRunnerStatus(data);
+          }
+        }
+      } catch {}
+    };
+
+    fetchStatus();
+    const interval = setInterval(fetchStatus, runnerStatus?.isRunning ? 800 : 2500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [runnerStatus?.isRunning]);
 
   // --------------------------------------------------------------------------
   // Single Form Studio State (Zero Hardcoded Defaults)
@@ -828,6 +854,26 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
             <Globe className="w-4 h-4 text-primary" />
             <span>Single Form Studio</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("live")}
+            className={`px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all flex items-center gap-2 cursor-pointer ${
+              activeTab === "live"
+                ? "bg-background text-foreground shadow-2xs border border-border/50"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Tv className="w-4 h-4 text-primary" />
+            <span>Inbuilt Live Browser</span>
+            {runnerStatus?.isHumanInterventionNeeded ? (
+              <Badge variant="destructive" className="text-[9px] px-1.5 py-0 animate-pulse font-mono">
+                Verify
+              </Badge>
+            ) : runnerStatus?.isRunning ? (
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
+            ) : null}
+          </button>
         </div>
 
         {/* ================================================================== */}
@@ -1500,6 +1546,37 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                   <span>{singleLaunchMessage}</span>
                 </div>
               )}
+
+              {/* Live Inbuilt Browser Viewport for Single Form Studio */}
+              {(isSingleLaunching || runnerStatus?.isRunning) && (
+                <div className="space-y-2 p-4 rounded-2xl bg-card border border-primary/30 shadow-xs animate-in fade-in duration-200">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Tv className="w-4 h-4 text-primary" />
+                      <h4 className="text-xs font-bold text-foreground">
+                        Inbuilt Live Screen Execution
+                      </h4>
+                      {runnerStatus?.isHumanInterventionNeeded && (
+                        <Badge variant="destructive" className="text-[9px] px-1.5 py-0 font-mono animate-pulse">
+                          ⚠️ Human Action Required
+                        </Badge>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("live")}
+                      className="text-xs text-primary hover:underline font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Open Full Screen Studio</span>
+                      <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <LiveBrowserScreen
+                    initialStatus={runnerStatus}
+                    className="w-full"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Single Form Payload Form & Detected DOM Table */}
@@ -1680,6 +1757,93 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 )}
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ================================================================== */}
+        {/* TAB 3: INBUILT LIVE BROWSER & HUMAN TAKEOVER                       */}
+        {/* ================================================================== */}
+        {activeTab === "live" && (
+          <div className="space-y-6">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl bg-gradient-to-r from-card via-card to-primary/5 border border-border">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Tv className="w-5 h-5 text-primary" />
+                  <h3 className="text-base font-bold text-foreground">
+                    Inbuilt Chromium Screencast & Human Takeover Console
+                  </h3>
+                  <Badge
+                    variant={
+                      runnerStatus?.isHumanInterventionNeeded
+                        ? "destructive"
+                        : runnerStatus?.isRunning
+                        ? "success"
+                        : "secondary"
+                    }
+                  >
+                    {runnerStatus?.isHumanInterventionNeeded
+                      ? "⚠️ Verify Human Required"
+                      : runnerStatus?.isRunning
+                      ? "Active Stream"
+                      : "Standby"}
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Watch autonomous browser interactions in real-time, click directly to solve anti-bot puzzles or Cloudflare challenges, and control live execution.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                {runnerStatus?.isRunning ? (
+                  <>
+                    {runnerStatus.isPaused ? (
+                      <button
+                        onClick={async () => {
+                          await fetch("/api/automation/resume", { method: "POST" });
+                        }}
+                        className="px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                        <span>Resume</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={async () => {
+                          await fetch("/api/automation/pause", { method: "POST" });
+                        }}
+                        className="px-3.5 py-1.5 rounded-xl border border-amber-500 text-amber-600 hover:bg-amber-500/10 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Pause className="w-3.5 h-3.5 fill-current" />
+                        <span>Pause</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={async () => {
+                        await fetch("/api/automation/stop", { method: "POST" });
+                      }}
+                      className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    >
+                      <Square className="w-3.5 h-3.5 fill-current" />
+                      <span>Stop Execution</span>
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setActiveTab("single")}
+                    className="px-3.5 py-1.5 rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Launch New Automation</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Inbuilt Live Screen Component */}
+            <LiveBrowserScreen
+              initialStatus={runnerStatus}
+              className="w-full shadow-md"
+            />
           </div>
         )}
 

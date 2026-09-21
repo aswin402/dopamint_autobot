@@ -20,9 +20,11 @@ import {
   User,
   Ticket,
   Zap,
+  Tv,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { LiveBrowserScreen } from "./LiveBrowserScreen";
 
 export interface RunnerStatusData {
   isRunning: boolean;
@@ -31,6 +33,11 @@ export interface RunnerStatusData {
   activeJobId?: string | null;
   currentEvent?: { id: number; title: string; url: string } | null;
   currentAttendee?: { id: string; name: string; email: string } | null;
+  currentUrl?: string | null;
+  currentTitle?: string | null;
+  latestFrame?: string | null;
+  isHumanInterventionNeeded?: boolean;
+  humanInterventionReason?: string | null;
   progress?: {
     completed: number;
     total: number;
@@ -218,7 +225,29 @@ export const AutomationMonitorPanel: React.FC<AutomationMonitorPanelProps> = ({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 sleek-scrollbar">
+        {/* Live Inbuilt Browser Viewport & Captcha Takeover */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+              <Tv className="w-3.5 h-3.5 text-primary" />
+              <span>Inbuilt Live Browser</span>
+            </span>
+            <span className="text-[10px] font-mono text-muted-foreground">
+              {status.isHumanInterventionNeeded
+                ? "⚠️ Human Takeover Required"
+                : status.isRunning
+                ? "1280×800 Live"
+                : "Standby"}
+            </span>
+          </div>
+          <LiveBrowserScreen
+            initialStatus={status}
+            compact={true}
+            className="w-full"
+          />
+        </div>
+
         {/* 2. Core Operational Metrics: Done, Success, Failed, Remaining */}
         <div className="p-3.5 rounded-2xl bg-card border border-border space-y-3 shadow-2xs">
           <div className="flex items-center justify-between">

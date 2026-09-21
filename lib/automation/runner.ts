@@ -1,4 +1,4 @@
-import { chromium, BrowserContext, Page } from "playwright";
+import { chromium, BrowserContext, Page, CDPSession } from "playwright";
 import path from "path";
 import fs from "fs";
 import prisma from "../prisma";
@@ -125,6 +125,15 @@ class AutomationRunner {
   }> = [];
   private listeners: ((log: RunnerLog) => void)[] = [];
 
+  // Live Inbuilt Screen & Human-in-the-Loop State
+  private activePage: Page | null = null;
+  private latestFrame: string | null = null;
+  private currentUrl: string | null = null;
+  private currentTitle: string | null = null;
+  private isHumanInterventionNeeded: boolean = false;
+  private humanInterventionReason: string | null = null;
+  private cdpSession: CDPSession | null = null;
+
   public getStatus() {
     const percent =
       this.totalItems > 0
@@ -137,6 +146,11 @@ class AutomationRunner {
       activeJobId: this.activeJobId,
       currentEvent: this.currentEvent,
       currentAttendee: this.currentAttendee,
+      currentUrl: this.currentUrl,
+      currentTitle: this.currentTitle,
+      latestFrame: this.latestFrame,
+      isHumanInterventionNeeded: this.isHumanInterventionNeeded,
+      humanInterventionReason: this.humanInterventionReason,
       progress: {
         completed: this.completedItems,
         total: this.totalItems,
@@ -159,6 +173,129 @@ class AutomationRunner {
       recentConfirmations: this.recentConfirmations.slice(0, 10),
       recentLogs: this.logs.slice(-60),
     };
+  }
+
+  public async captureFrame(page?: Page) {
+    const targetPage = page || this.activePage;
+    if (!targetPage || targetPage.isClosed()) return;
+    try {
+      const buffer = await targetPage.screenshot({
+        type: "jpeg",
+        quality: 55,
+      });
+      this.latestFrame = `data:image/jpeg;base64,${buffer.toString("base64")}`;
+      this.currentUrl = targetPage.url();
+      this.currentTitle = await targetPage.title().catch(() => "");
+    } catch {}
+  }
+
+  public async setupCDPScreencast(page: Page) {
+    try {
+      this.cdpSession = await page.context().newCDPSession(page);
+      await this.cdpSession.send("Page.startScreencast", {
+        format: "jpeg",
+        quality: 60,
+        everyNthFrame: 1,
+        maxWidth: 1280,
+        maxHeight: 800,
+      });
+
+      this.cdpSession.on("Page.screencastFrame", async ({ data, sessionId }) => {
+        this.latestFrame = `data:image/jpeg;base64,${data}`;
+        this.currentUrl = page.url();
+        try {
+          if (this.cdpSession) {
+            await this.cdpSession.send("Page.screencastFrameAck", { sessionId });
+          }
+        } catch {}
+      });
+    } catch {
+      // Periodic screenshot fallback is active
+    }
+  }
+
+  public async checkForCaptcha(page: Page): Promise<{ detected: boolean; reason?: string }> {
+    try {
+      // Cloudflare Turnstile
+      const turnstile = await page.$(
+        'iframe[src*="challenges.cloudflare.com"], .cf-turnstile, #turnstile-wrapper, iframe[title*="Cloudflare"]'
+      );
+      if (turnstile && (await turnstile.isVisible().catch(() => false))) {
+        return { detected: true, reason: "Cloudflare Turnstile verification challenge" };
+      }
+
+      // Google reCAPTCHA
+      const recaptcha = await page.$(
+        'iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"], .g-recaptcha'
+      );
+      if (recaptcha && (await recaptcha.isVisible().catch(() => false))) {
+        return { detected: true, reason: "Google reCAPTCHA verification challenge" };
+      }
+
+      // hCaptcha
+      const hcaptcha = await page.$('iframe[src*="hcaptcha.com"], .h-captcha');
+      if (hcaptcha && (await hcaptcha.isVisible().catch(() => false))) {
+        return { detected: true, reason: "hCaptcha verification challenge" };
+      }
+
+      // Cloudflare waiting room / challenge
+      const pageTitle = await page.title().catch(() => "");
+      if (
+        pageTitle.toLowerCase().includes("just a moment") ||
+        pageTitle.toLowerCase().includes("attention required")
+      ) {
+        return { detected: true, reason: "Cloudflare Security Challenge Screen" };
+      }
+    } catch {}
+    return { detected: false };
+  }
+
+  public async handleHumanInteraction(action: {
+    action: string;
+    x?: number;
+    y?: number;
+    text?: string;
+  }): Promise<{ success: boolean; message: string; frame?: string | null }> {
+    if (!this.activePage || this.activePage.isClosed()) {
+      return { success: false, message: "No active browser session available", frame: this.latestFrame };
+    }
+
+    try {
+      if (action.action === "click" && action.x !== undefined && action.y !== undefined) {
+        const targetX = Math.max(0, Math.min(1280, action.x));
+        const targetY = Math.max(0, Math.min(800, action.y));
+        await this.activePage.mouse.click(targetX, targetY);
+        this.log(`🖱️ Live Click: Dispatched at (${Math.round(targetX)}, ${Math.round(targetY)})`, "info");
+        await this.activePage.waitForTimeout(400);
+        await this.captureFrame();
+        return { success: true, message: `Clicked at (${targetX}, ${targetY})`, frame: this.latestFrame };
+      }
+
+      if (action.action === "type" && action.text) {
+        await this.activePage.keyboard.type(action.text);
+        this.log(`⌨️ Live Type: Typed "${action.text}"`, "info");
+        await this.captureFrame();
+        return { success: true, message: "Typed text successfully", frame: this.latestFrame };
+      }
+
+      if (action.action === "resume") {
+        this.isHumanInterventionNeeded = false;
+        this.humanInterventionReason = null;
+        this.isPaused = false;
+        this.log("▶️ Human verification confirmed! Resuming automation...", "success");
+        await this.captureFrame();
+        return { success: true, message: "Resumed automation", frame: this.latestFrame };
+      }
+
+      if (action.action === "refresh") {
+        await this.captureFrame();
+        return { success: true, message: "Frame refreshed", frame: this.latestFrame };
+      }
+
+      return { success: false, message: "Unknown action" };
+    } catch (err: any) {
+      return { success: false, message: err.message || "Interaction failed" };
+    }
   }
 
   public subscribeLogs(callback: (log: RunnerLog) => void) {
@@ -277,6 +414,8 @@ class AutomationRunner {
       });
 
       const page = await context.newPage();
+      this.activePage = page;
+      await this.setupCDPScreencast(page);
 
       const attendees = await prisma.attendee.findMany({
         where: { id: { in: attendeeIds } },
@@ -503,9 +642,16 @@ class AutomationRunner {
     } catch (err: any) {
       this.log(`Critical runner error: ${err.message}`, "error");
     } finally {
-      if (context) await context.close();
+      this.activePage = null;
+      if (this.cdpSession) {
+        await this.cdpSession.detach().catch(() => {});
+        this.cdpSession = null;
+      }
+      if (context) await context.close().catch(() => {});
       this.isRunning = false;
       this.isPaused = false;
+      this.isHumanInterventionNeeded = false;
+      this.humanInterventionReason = null;
       this.currentEvent = null;
       this.currentAttendee = null;
       this.log("🎉 Automation batch finished!", "success");
@@ -801,6 +947,31 @@ class AutomationRunner {
       await page.waitForLoadState("domcontentloaded");
     });
     await page.waitForTimeout(1500);
+    await this.captureFrame(page);
+
+    // Initial Human Verification / Captcha check
+    const initialCaptcha = await this.checkForCaptcha(page);
+    if (initialCaptcha.detected) {
+      this.log(`⚠️ ${initialCaptcha.reason} detected! Pausing for human verification in live view...`, "warn");
+      this.isHumanInterventionNeeded = true;
+      this.humanInterventionReason = initialCaptcha.reason || null;
+      this.isPaused = true;
+      await this.captureFrame(page);
+
+      const waitStart = Date.now();
+      while (this.isHumanInterventionNeeded && this.isRunning && Date.now() - waitStart < 90000) {
+        await this.captureFrame(page);
+        await page.waitForTimeout(1000);
+        const check = await this.checkForCaptcha(page);
+        if (!check.detected) {
+          this.isHumanInterventionNeeded = false;
+          this.humanInterventionReason = null;
+          this.isPaused = false;
+          this.log("🎉 Human verification passed! Resuming auto-fill...", "success");
+          break;
+        }
+      }
+    }
 
     // Extract all interactive fields
     const inputs = await page.locator("input:not([type='hidden']), textarea, select").all();
@@ -905,6 +1076,7 @@ class AutomationRunner {
           await inp.fill(valueToFill);
           const masked = valueToFill.length > 3 ? valueToFill.slice(0, 3) + "***" : valueToFill;
           this.log(`✍️ Filled [${info.placeholder || info.name || info.tag}]: "${masked}"`, "info");
+          await this.captureFrame(page);
           await page.waitForTimeout(250);
         }
       } catch (fieldErr: any) {
@@ -915,6 +1087,7 @@ class AutomationRunner {
     // Pre-submit pause
     const preSubmitMs = options.preSubmitDelayMs || 1500;
     this.log(`⏳ Pre-submission check: pausing ${preSubmitMs}ms for human pacing...`, "info");
+    await this.captureFrame(page);
     await page.waitForTimeout(preSubmitMs);
 
     // Locate submit button
@@ -929,16 +1102,33 @@ class AutomationRunner {
       await submitBtn.scrollIntoViewIfNeeded().catch(() => {});
       this.log(`🚀 Clicking submission action button: "${btnText}"...`, "info");
       await submitBtn.click({ force: true, timeout: 5000 });
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(2000);
+      await this.captureFrame(page);
 
       // Turnstile / CAPTCHA check
-      const turnstileFrame = page.frameLocator("iframe[src*='challenges.cloudflare.com']");
-      const turnstileBox = turnstileFrame.locator("input[type='checkbox'], .ctp-checkbox-label, #challenge-stage").first();
-      if ((await turnstileBox.count()) > 0) {
-        this.log(`🛡️ Cloudflare challenge detected. Interacting...`, "warn");
-        await turnstileBox.click({ delay: 150 }).catch(() => {});
-        await page.waitForTimeout(4000);
+      const postSubmitCaptcha = await this.checkForCaptcha(page);
+      if (postSubmitCaptcha.detected) {
+        this.log(`🛡️ ${postSubmitCaptcha.reason} detected. Waiting for human verification in live view...`, "warn");
+        this.isHumanInterventionNeeded = true;
+        this.humanInterventionReason = postSubmitCaptcha.reason || null;
+        this.isPaused = true;
+        await this.captureFrame(page);
+
+        const waitStart = Date.now();
+        while (this.isHumanInterventionNeeded && this.isRunning && Date.now() - waitStart < 90000) {
+          await this.captureFrame(page);
+          await page.waitForTimeout(1000);
+          const check = await this.checkForCaptcha(page);
+          if (!check.detected) {
+            this.isHumanInterventionNeeded = false;
+            this.humanInterventionReason = null;
+            this.isPaused = false;
+            this.log("🎉 Human verification passed! Finalizing submission...", "success");
+            break;
+          }
+        }
       }
+      await this.captureFrame(page);
 
       const bodyText = await page.locator("body").innerText().catch(() => "");
       const hasSuccessText = /thank\s*you|message\s*sent|successfully|received|submitted|success|ticket|confirmed/i.test(bodyText);
@@ -1030,6 +1220,11 @@ class AutomationRunner {
       });
 
       const page = await context.newPage();
+      this.activePage = page;
+      this.currentUrl = url;
+      this.currentTitle = "Target Form";
+      await this.setupCDPScreencast(page);
+
       const result = await this.executeFormSubmission(page, url, data, {
         preSubmitDelayMs: options.preSubmitDelayMs || 1500,
       });
@@ -1056,9 +1251,16 @@ class AutomationRunner {
       this.log(`❌ Automation error on ${url}: ${err.message}`, "error");
       return { success: false, verified: false, message: err.message };
     } finally {
-      if (context) await context.close();
+      this.activePage = null;
+      if (this.cdpSession) {
+        await this.cdpSession.detach().catch(() => {});
+        this.cdpSession = null;
+      }
+      if (context) await context.close().catch(() => {});
       this.isRunning = false;
       this.isPaused = false;
+      this.isHumanInterventionNeeded = false;
+      this.humanInterventionReason = null;
       this.currentEvent = null;
       this.currentAttendee = null;
       this.log("🏁 Custom form automation finished.", "info");
@@ -1213,6 +1415,11 @@ class AutomationRunner {
 
         try {
           page = await context.newPage();
+          this.activePage = page;
+          this.currentUrl = target.url;
+          this.currentTitle = target.title || target.url;
+          await this.setupCDPScreencast(page);
+
           const fillRes = await this.executeFormSubmission(page, target.url, profile, {
             preSubmitDelayMs: options.preSubmitDelayMs || 1500,
           });
@@ -1251,6 +1458,11 @@ class AutomationRunner {
             "error"
           );
         } finally {
+          this.activePage = null;
+          if (this.cdpSession) {
+            await this.cdpSession.detach().catch(() => {});
+            this.cdpSession = null;
+          }
           if (page) {
             await page.close().catch(() => {});
           }
@@ -1279,9 +1491,16 @@ class AutomationRunner {
         }
       }
     } finally {
+      this.activePage = null;
+      if (this.cdpSession) {
+        await this.cdpSession.detach().catch(() => {});
+        this.cdpSession = null;
+      }
       if (context) await context.close().catch(() => {});
       this.isRunning = false;
       this.isPaused = false;
+      this.isHumanInterventionNeeded = false;
+      this.humanInterventionReason = null;
       this.currentEvent = null;
       this.currentAttendee = null;
       this.log(

@@ -182,8 +182,8 @@
 
 /* Modern Minimalist Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -193,5 +193,28 @@
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+}
+
+/* Compact Sleek Scrollbar (Small Length & Thin Width) */
+.sleek-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+.sleek-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.sleek-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+  margin-top: 24px;
+  margin-bottom: 24px;
+}
+.sleek-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 9999px;
+  min-height: 28px;
+}
+.sleek-scrollbar::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
 }
