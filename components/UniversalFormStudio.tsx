@@ -83,7 +83,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   onToggleVisualMode,
   onLaunchSuccess,
 }) => {
-  // Active Tab: "matrix" ($N$ URLs × $M$ People), "single" (Focused Form Studio), or "live" (Inbuilt Live Browser)
+  // Active Tab: "matrix" (Bulk Automation), "single" (Single Form), or "live" (Inbuilt Live Browser)
   const [activeTab, setActiveTab] = useState<"matrix" | "single" | "live">("matrix");
   const [runnerStatus, setRunnerStatus] = useState<any>(null);
 
@@ -111,7 +111,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   }, [runnerStatus?.isRunning]);
 
   // --------------------------------------------------------------------------
-  // Single Form Studio State (Zero Hardcoded Defaults)
+  // Single Form Studio State
   // --------------------------------------------------------------------------
   const [targetUrl, setTargetUrl] = useState<string>("");
   const [isInspecting, setIsInspecting] = useState(false);
@@ -141,7 +141,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   const [showSaveTemplateModal, setShowSaveTemplateModal] = useState<boolean>(false);
 
   // --------------------------------------------------------------------------
-  // Multi-Target Matrix Runner State ($N$ URLs × $M$ People)
+  // Bulk Automation State
   // --------------------------------------------------------------------------
   const [matrixUrlsText, setMatrixUrlsText] = useState<string>("");
   const [matrixProfiles, setMatrixProfiles] = useState<AttendeeProfile[]>([]);
@@ -152,6 +152,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
 
   // File Ingestion State
   const [isUploading, setIsUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
   const [uploadFeedback, setUploadFeedback] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -419,8 +420,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   // --------------------------------------------------------------------------
   // Document Upload Extraction Handler (.pdf, .xlsx, .csv, .docx, .md)
   // --------------------------------------------------------------------------
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const processUploadedFile = async (file: File) => {
     if (!file) return;
 
     setIsUploading(true);
@@ -473,14 +473,21 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
       }
 
       setUploadFeedback(
-        `✅ Successfully extracted ${urlsAdded} target URLs and ${peopleAdded} attendee profiles from ${file.name}.`
+        `Successfully extracted ${urlsAdded} form links and ${peopleAdded} user profiles from ${file.name}.`
       );
       setTimeout(() => setUploadFeedback(null), 6000);
     } catch (err: any) {
-      setUploadFeedback(`⚠️ Upload error: ${err.message}`);
+      setUploadFeedback(`Upload error: ${err.message}`);
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processUploadedFile(file);
     }
   };
 
@@ -666,15 +673,15 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   };
 
   // --------------------------------------------------------------------------
-  // Matrix Batch Runner Actions ($N$ URLs × $M$ People)
+  // Bulk Automation Runner Actions
   // --------------------------------------------------------------------------
   const handleLaunchMatrix = async () => {
     if (targetUrlsList.length === 0) {
-      setBatchFeedback("⚠️ Please provide at least one valid target URL.");
+      setBatchFeedback("Please provide at least one valid target form link.");
       return;
     }
     if (matrixProfiles.length === 0) {
-      setBatchFeedback("⚠️ Please add at least one person/profile record.");
+      setBatchFeedback("Please add at least one person / profile record.");
       return;
     }
 
@@ -684,7 +691,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
 
     const targets = targetUrlsList.map((url, i) => ({
       url,
-      title: `Target Form #${i + 1}`,
+      title: `Form #${i + 1}`,
     }));
 
     try {
@@ -705,11 +712,11 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
 
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "Failed to start matrix batch");
+        throw new Error(data.error || "Failed to start bulk automation");
       }
 
       setBatchFeedback(
-        `🚀 Batch Matrix launched: ${targets.length} forms × ${matrixProfiles.length} profiles = ${data.totalTasks} tasks queued.`
+        `Bulk automation launched: ${targets.length} forms and ${matrixProfiles.length} profiles (${data.totalTasks} total submissions queued).`
       );
       onLaunchSuccess?.();
 
@@ -729,11 +736,11 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
               setIsMatrixRunning(false);
               playNotificationChime();
               triggerDesktopNotification(
-                "Matrix Batch Completed",
-                `Finished ${status.progress.completed}/${status.progress.total} tasks. Succeeded: ${status.progress.successCount}, Failed: ${status.progress.failedCount}.`
+                "Bulk Automation Completed",
+                `Finished ${status.progress.completed}/${status.progress.total} submissions. Succeeded: ${status.progress.successCount}, Failed: ${status.progress.failedCount}.`
               );
               setBatchFeedback(
-                `🎉 Batch complete! Succeeded: ${status.progress.successCount}, Failed: ${status.progress.failedCount} out of ${status.progress.total} tasks.`
+                `Automation complete! Succeeded: ${status.progress.successCount}, Failed: ${status.progress.failedCount} out of ${status.progress.total} submissions.`
               );
             }
           }
@@ -746,7 +753,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
       }, 1500);
     } catch (err: any) {
       setIsMatrixRunning(false);
-      setBatchFeedback(`❌ Error starting matrix batch: ${err.message}`);
+      setBatchFeedback(`Error starting bulk automation: ${err.message}`);
     }
   };
 
@@ -776,19 +783,16 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl sm:text-2xl font-bold text-foreground tracking-tight flex items-center gap-2">
                 <span>Autonomous Form Studio</span>
-                <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs font-semibold">
-                  Zero-Hardcoding
-                </Badge>
               </h1>
               {isMatrixRunning && (
                 <Badge variant="warning" className="animate-pulse text-xs flex items-center gap-1">
                   <RefreshCw className="w-3 h-3 animate-spin" />
-                  {isMatrixPaused ? "Paused" : "Batch Active"}
+                  {isMatrixPaused ? "Paused" : "Running"}
                 </Badge>
               )}
             </div>
             <p className="text-xs sm:text-sm text-muted-foreground">
-              Autonomous browser-driven form execution. Supports batch matrix ($N$ Links × $M$ People), document parsing (.pdf, .xlsx, .docx, .md), and stealth anti-bot evasion.
+              Paste form links, add people profiles, or upload a document (PDF, Excel, CSV, Word, Markdown) to launch automated submissions.
             </p>
           </div>
 
@@ -836,8 +840,8 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
             }`}
           >
             <Layers className="w-4 h-4 text-primary" />
-            <span>Multi-Target Matrix ($N$ Links × $M$ People)</span>
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0 font-mono">
+            <span>Bulk Automation</span>
+            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
               Batch
             </Badge>
           </button>
@@ -852,7 +856,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
             }`}
           >
             <Globe className="w-4 h-4 text-primary" />
-            <span>Single Form Studio</span>
+            <span>Single Form</span>
           </button>
 
           <button
@@ -865,7 +869,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
             }`}
           >
             <Tv className="w-4 h-4 text-primary" />
-            <span>Inbuilt Live Browser</span>
+            <span>Live Browser Screen</span>
             {runnerStatus?.isHumanInterventionNeeded ? (
               <Badge variant="destructive" className="text-[9px] px-1.5 py-0 animate-pulse font-mono">
                 Verify
@@ -877,25 +881,53 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
         </div>
 
         {/* ================================================================== */}
-        {/* TAB 1: MULTI-TARGET MATRIX RUNNER ($N$ URLs × $M$ People)         */}
+        {/* TAB 1: BULK AUTOMATION                                             */}
         {/* ================================================================== */}
         {activeTab === "matrix" && (
           <div className="space-y-6">
-            {/* Top Multi-Format Document Ingestion Banner */}
-            <div className="bg-gradient-to-r from-primary/5 via-card to-card border border-primary/20 rounded-2xl p-5 shadow-2xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Upload className="w-4 h-4 text-primary" />
-                  <h3 className="text-sm font-bold text-foreground">
-                    Import Data Source from Document
-                  </h3>
-                  <Badge variant="outline" className="text-[10px] bg-background border-primary/30">
-                    PDF, XLSX, CSV, DOCX, MD
-                  </Badge>
+            {/* Multi-Format Document Ingestion Dropzone */}
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                const file = e.dataTransfer.files?.[0];
+                if (file) processUploadedFile(file);
+              }}
+              className={`border-2 border-dashed rounded-2xl p-5 transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-4 ${
+                isDragging
+                  ? "border-primary bg-primary/10 scale-[1.005]"
+                  : "border-border bg-card/60 hover:bg-card hover:border-primary/40"
+              }`}
+            >
+              <div className="flex items-center gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                  <Upload className="w-5 h-5" />
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Upload spreadsheets, registration forms, or documents. The agent automatically extracts target URLs and attendee records with zero hardcoding.
-                </p>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-sm font-semibold text-foreground">
+                      Upload Document to Auto-Fill Links & People Data
+                    </h3>
+                    <div className="flex items-center gap-1">
+                      {["PDF", "XLSX", "CSV", "DOCX", "MD"].map((fmt) => (
+                        <span
+                          key={fmt}
+                          className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground border border-border font-medium"
+                        >
+                          {fmt}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Drop your spreadsheet, contact list, or document here to automatically extract form URLs and attendee details.
+                  </p>
+                </div>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
@@ -915,12 +947,12 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                   {isUploading ? (
                     <>
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Parsing Document...</span>
+                      <span>Reading Document...</span>
                     </>
                   ) : (
                     <>
                       <FileText className="w-3.5 h-3.5" />
-                      <span>Upload Data Source</span>
+                      <span>Browse Document</span>
                     </>
                   )}
                 </button>
@@ -928,7 +960,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
             </div>
 
             {uploadFeedback && (
-              <div className="flex items-center gap-2 p-3 bg-primary/10 border border-primary/20 text-xs text-primary rounded-xl animate-in fade-in">
+              <div className="flex items-center gap-2 p-3 bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-600 dark:text-emerald-400 rounded-xl animate-in fade-in">
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
                 <span>{uploadFeedback}</span>
               </div>
@@ -936,16 +968,16 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
 
             {/* Matrix Setup Grid (URLs on Left, People Profiles on Right) */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Left Column: N Target Form URLs (with Full CRUD) */}
+              {/* Left Column: Target Form Links */}
               <div className="lg:col-span-6 flex flex-col gap-3 bg-card border border-border rounded-2xl p-5 shadow-2xs">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                     <Globe className="w-4 h-4 text-primary" />
-                    <span>Target Form URLs ($N$)</span>
+                    <span>Target Form Links</span>
                   </label>
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary" className="text-xs font-mono font-bold">
-                      {targetUrlsList.length} Targets
+                      {targetUrlsList.length} {targetUrlsList.length === 1 ? "Link" : "Links"}
                     </Badge>
                     {targetUrlsList.length > 0 && (
                       <button
@@ -953,14 +985,14 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                         onClick={handleClearAllUrls}
                         className="text-[11px] px-2 py-0.5 rounded-lg bg-muted hover:bg-rose-500/10 hover:text-rose-500 text-muted-foreground border border-border transition-colors cursor-pointer"
                       >
-                        Clear
+                        Clear All
                       </button>
                     )}
                   </div>
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Paste form URLs below (one per line) or import from your saved events list:
+                  Paste multiple form URLs below (one per line):
                 </p>
 
                 {/* Import from Saved Events Dropdown */}
@@ -976,7 +1008,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                       className="w-full bg-background border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none focus:border-primary"
                     >
                       <option value="" disabled>
-                        Choose an event to add its URL...
+                        Choose a saved event to add its URL...
                       </option>
                       {events.map((ev) => (
                         <option key={ev.id} value={ev.url}>
@@ -998,12 +1030,12 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 {/* Target URLs List Preview with In-Place CRUD (Edit, Delete) */}
                 <div className="space-y-1.5 pt-2">
                   <span className="text-[11px] font-semibold text-muted-foreground uppercase">
-                    Configured Targets ({targetUrlsList.length}):
+                    Configured Links ({targetUrlsList.length}):
                   </span>
                   <div className="max-h-56 overflow-y-auto space-y-1.5 pr-1">
                     {targetUrlsList.length === 0 ? (
                       <div className="p-4 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground">
-                        No target URLs added yet. Enter links above, select a saved event, or upload a document.
+                        No links added yet. Paste URLs above, select a saved event, or upload a document.
                       </div>
                     ) : (
                       targetUrlsList.map((url, i) => (
@@ -1045,16 +1077,16 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 </div>
               </div>
 
-              {/* Right Column: M People / Profiles (with Full CRUD) */}
+              {/* Right Column: People & Form Data */}
               <div className="lg:col-span-6 flex flex-col gap-3 bg-card border border-border rounded-2xl p-5 shadow-2xs">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                     <Users className="w-4 h-4 text-primary" />
-                    <span>People & Profiles ($M$)</span>
+                    <span>People & Form Data</span>
                   </label>
                   <div className="flex items-center gap-2">
                     <Badge variant="secondary" className="text-xs font-mono font-bold">
-                      {matrixProfiles.length} Profiles
+                      {matrixProfiles.length} {matrixProfiles.length === 1 ? "Person" : "People"}
                     </Badge>
                     <button
                       type="button"
@@ -1062,7 +1094,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                       className="px-2.5 py-1 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-all shadow-2xs"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>Add Profile</span>
+                      <span>Add Person</span>
                     </button>
                   </div>
                 </div>
@@ -1105,9 +1137,9 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                   {matrixProfiles.length === 0 ? (
                     <div className="p-6 rounded-xl border border-dashed border-border text-center text-xs text-muted-foreground space-y-2">
                       <Users className="w-6 h-6 mx-auto opacity-40 text-primary" />
-                      <p>No profiles added yet.</p>
+                      <p>No people added yet.</p>
                       <p className="text-[11px] text-muted-foreground/80">
-                        Click "Add Profile", import from your Team Roster, or upload a document.
+                        Click "Add Person", import from your Team Roster, or upload a document.
                       </p>
                     </div>
                   ) : (
@@ -1147,7 +1179,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                             type="button"
                             onClick={() => handleOpenEditProfile(p, idx)}
                             className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all cursor-pointer"
-                            title="Edit profile"
+                            title="Edit person"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                           </button>
@@ -1155,7 +1187,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                             type="button"
                             onClick={() => handleRemoveProfile(idx)}
                             className="p-1.5 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-all cursor-pointer"
-                            title="Remove profile"
+                            title="Remove person"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -1172,18 +1204,18 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                       onClick={handleClearAllProfiles}
                       className="text-[11px] text-muted-foreground hover:text-rose-500 cursor-pointer"
                     >
-                      Clear all profiles
+                      Clear all people
                     </button>
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Execution Options Bar */}
+            {/* Automation Settings Bar */}
             <div className="bg-card border border-border rounded-2xl p-5 shadow-2xs space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-primary" />
-                <span>Matrix Execution & Anti-Bot Strategy Options</span>
+                <span>Automation Settings</span>
               </h3>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1191,7 +1223,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                     <Layers className="w-3.5 h-3.5 text-primary" />
-                    <span>Pairing Mode</span>
+                    <span>Distribution Mode</span>
                   </label>
                   <select
                     value={pairingMode}
@@ -1199,7 +1231,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                     className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground outline-none focus:border-primary"
                   >
                     <option value="cartesian">
-                      Cartesian Matrix ({targetUrlsList.length} × {matrixProfiles.length} = {calculatedTotalTasks} tasks)
+                      All Forms for All People ({targetUrlsList.length} × {matrixProfiles.length} = {calculatedTotalTasks} tasks)
                     </option>
                     <option value="pairwise">
                       Pairwise 1:1 Matching ({calculatedTotalTasks} tasks)
@@ -1211,17 +1243,17 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                     <Clock className="w-3.5 h-3.5 text-primary" />
-                    <span>Inter-Task Pacing Delay</span>
+                    <span>Pacing Delay</span>
                   </label>
                   <select
                     value={pacingDelaySec}
                     onChange={(e) => setPacingDelaySec(Number(e.target.value))}
                     className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground outline-none focus:border-primary"
                   >
-                    <option value={5}>5s (Rapid Mode)</option>
-                    <option value={8}>8s (Recommended Anti-Bot)</option>
+                    <option value={8}>8s (Standard - Recommended)</option>
+                    <option value={5}>5s (Fast Mode)</option>
                     <option value={15}>15s (Stealth Guarded)</option>
-                    <option value={25}>25s (Ultra-Safe Evader)</option>
+                    <option value={25}>25s (Ultra-Safe)</option>
                   </select>
                 </div>
 
@@ -1229,16 +1261,16 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 <div className="space-y-1.5">
                   <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                     <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                    <span>Pre-Submit Review Pause</span>
+                    <span>Pre-Submit Review</span>
                   </label>
                   <select
                     value={preSubmitDelayMs}
                     onChange={(e) => setPreSubmitDelayMs(Number(e.target.value))}
                     className="w-full bg-background border border-border rounded-xl px-3 py-2 text-xs text-foreground outline-none focus:border-primary"
                   >
-                    <option value={1000}>1.0s (Fast)</option>
                     <option value={1500}>1.5s (Standard)</option>
-                    <option value={3000}>3.0s (Human Review Simulation)</option>
+                    <option value={1000}>1.0s (Fast)</option>
+                    <option value={3000}>3.0s (Human Simulation)</option>
                   </select>
                 </div>
 
@@ -1250,7 +1282,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                     ) : (
                       <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
                     )}
-                    <span>Execution Environment</span>
+                    <span>Browser Visibility</span>
                   </label>
                   <div className="p-2 rounded-xl bg-background border border-border text-xs font-medium text-foreground flex items-center justify-between">
                     <span>{isVisualMode ? "Visual Headed Browser" : "Headless Stealth"}</span>
@@ -1266,20 +1298,20 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
               </div>
             </div>
 
-            {/* Launch CTA Bar & Live Matrix KPIs */}
+            {/* Launch CTA Bar & Live Status */}
             <div className="bg-card border border-border rounded-2xl p-5 shadow-2xs space-y-4">
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <h3 className="text-sm font-bold text-foreground">
-                      Ready to Run Matrix Automation
+                      Ready to Launch Bulk Automation
                     </h3>
                     <Badge variant="secondary" className="font-mono text-xs">
                       {calculatedTotalTasks} Total Submissions
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Pairs {targetUrlsList.length} target forms with {matrixProfiles.length} attendee profiles using randomized typing delays & anti-bot evasion.
+                    Submits {targetUrlsList.length} target forms with data from {matrixProfiles.length} people using anti-bot emulation.
                   </p>
                 </div>
 
@@ -1321,7 +1353,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                       className="px-6 py-3 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 text-xs sm:text-sm font-bold flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md hover:shadow-lg"
                     >
                       <Play className="w-4 h-4 fill-current" />
-                      <span>Launch Matrix Batch ({calculatedTotalTasks} Submissions)</span>
+                      <span>Start Bulk Automation ({calculatedTotalTasks} Submissions)</span>
                     </button>
                   )}
                 </div>

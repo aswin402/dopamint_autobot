@@ -337,7 +337,7 @@ export default function Home() {
         {/* Top Header */}
         <Header
           activeTitle={getActiveTabTitle()}
-          subtitle="Autonomous Form Filling & Bulk Registration Agent"
+          subtitle="Bulk Web Form & Registration Automation"
           selectedAttendeeName={selectedAttendee?.name}
           runnerStatus={runnerStatus}
           isVisualMode={isVisualMode}
