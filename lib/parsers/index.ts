@@ -63,6 +63,18 @@ export async function parseDocument(
     }
   };
 
+function getRowValue(row: Record<string, any>, possibleKeys: string[]): string {
+  const rowKeys = Object.keys(row);
+  for (const pk of possibleKeys) {
+    const foundKey = rowKeys.find((k) => k.trim().toLowerCase() === pk.toLowerCase());
+    if (foundKey && row[foundKey] !== undefined && row[foundKey] !== null) {
+      const val = String(row[foundKey]).trim();
+      if (val) return val;
+    }
+  }
+  return "";
+}
+
   // 1. Spreadsheets (.xlsx, .xls)
   if (ext === "xlsx" || ext === "xls") {
     const workbook = XLSX.read(buffer, { type: "buffer" });
@@ -71,29 +83,41 @@ export async function parseDocument(
     const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet);
 
     rows.forEach((row, idx) => {
-      // Look for event-like keys
-      const title = row["Event Name"] || row["Title"] || row["Event"] || row["name"] || "";
-      const url = row["Event Link"] || row["Link"] || row["URL"] || row["url"] || "";
-      const date = row["Date"] || row["date"] || "";
-
-      if (url && String(url).startsWith("http")) {
-        addEventUrl(String(url), String(title).trim() || `Event #${idx + 1}`);
+      const title = getRowValue(row, ["event name", "title", "event", "name", "form", "target"]);
+      let url = getRowValue(row, ["target url", "form link", "event link", "link", "url", "form url", "website", "form", "target"]);
+      if (!url) {
+        for (const val of Object.values(row)) {
+          if (val && typeof val === "string" && val.trim().startsWith("http")) {
+            url = val.trim();
+            break;
+          }
+        }
+      }
+      if (url && url.startsWith("http")) {
+        addEventUrl(url, title || `Form #${events.length + 1}`);
       }
 
-      // Look for attendee-like keys
-      const name = row["Name"] || row["Attendee"] || row["Full Name"];
-      const email = row["Email"] || row["E-mail"];
-      if (email && String(email).includes("@")) {
+      const email = getRowValue(row, ["email", "e-mail", "mail", "contact email"]);
+      if (email && email.includes("@")) {
+        const name = getRowValue(row, ["name", "full name", "attendee", "person", "first name", "user"]) || email.split("@")[0].replace(/[._-]/g, " ");
+        const phone = getRowValue(row, ["phone", "mobile", "number", "tel", "cell", "contact"]);
+        const company = getRowValue(row, ["company", "organization", "org", "firm", "business"]);
+        const role = getRowValue(row, ["role", "title", "designation", "position"]);
+        const pitch = getRowValue(row, ["message", "notes", "pitch", "inquiry", "query", "bio", "comment"]);
+        const telegram = getRowValue(row, ["telegram id", "telegram", "tg"]);
+        const twitter = getRowValue(row, ["twitter id", "twitter", "x"]);
+        const linkedin = getRowValue(row, ["linkedin", "linkedin url"]);
+
         attendees.push({
-          name: String(name || "Team Member").trim(),
-          email: String(email).trim(),
-          phone: String(row["Phone"] || row["Mobile"] || row["number"] || "").trim(),
-          company: String(row["Company"] || row["Organization"] || "Celestialabs").trim(),
-          role: String(row["Role"] || row["Title"] || "Member").trim(),
-          pitch: String(row["Message"] || row["Notes"] || "").trim(),
-          telegram: String(row["Telegram ID"] || row["Telegram"] || "").trim(),
-          twitter: String(row["Twitter ID"] || row["Twitter"] || "").trim(),
-          linkedin: String(row["LinkedIn"] || "").trim(),
+          name,
+          email,
+          phone: phone || undefined,
+          company: company || "Celestialabs",
+          role: role || "Member",
+          pitch: pitch || undefined,
+          telegram: telegram || undefined,
+          twitter: twitter || undefined,
+          linkedin: linkedin || undefined,
         });
       }
     });
@@ -115,24 +139,41 @@ export async function parseDocument(
     });
 
     parsed.data.forEach((row, idx) => {
-      const title = row["Event Name"] || row["Title"] || row["Event"] || row["title"] || "";
-      const url = row["Event Link"] || row["Link"] || row["URL"] || row["url"] || "";
-
-      if (url && String(url).startsWith("http")) {
-        addEventUrl(String(url), String(title).trim() || `Event #${idx + 1}`);
+      const title = getRowValue(row, ["event name", "title", "event", "name", "form", "target"]);
+      let url = getRowValue(row, ["target url", "form link", "event link", "link", "url", "form url", "website", "form", "target"]);
+      if (!url) {
+        for (const val of Object.values(row)) {
+          if (val && typeof val === "string" && val.trim().startsWith("http")) {
+            url = val.trim();
+            break;
+          }
+        }
+      }
+      if (url && url.startsWith("http")) {
+        addEventUrl(url, title || `Form #${events.length + 1}`);
       }
 
-      const email = row["Email"] || row["email"];
-      if (email && String(email).includes("@")) {
+      const email = getRowValue(row, ["email", "e-mail", "mail", "contact email"]);
+      if (email && email.includes("@")) {
+        const name = getRowValue(row, ["name", "full name", "attendee", "person", "first name", "user"]) || email.split("@")[0].replace(/[._-]/g, " ");
+        const phone = getRowValue(row, ["phone", "mobile", "number", "tel", "cell", "contact"]);
+        const company = getRowValue(row, ["company", "organization", "org", "firm", "business"]);
+        const role = getRowValue(row, ["role", "title", "designation", "position"]);
+        const pitch = getRowValue(row, ["message", "notes", "pitch", "inquiry", "query", "bio", "comment"]);
+        const telegram = getRowValue(row, ["telegram id", "telegram", "tg"]);
+        const twitter = getRowValue(row, ["twitter id", "twitter", "x"]);
+        const linkedin = getRowValue(row, ["linkedin", "linkedin url"]);
+
         attendees.push({
-          name: String(row["Name"] || "Team Member").trim(),
-          email: String(email).trim(),
-          phone: String(row["Phone"] || row["Mobile"] || row["number"] || "").trim(),
-          company: String(row["Company"] || "Celestialabs").trim(),
-          role: String(row["Role"] || "Member").trim(),
-          pitch: String(row["Message"] || row["Notes"] || "").trim(),
-          telegram: String(row["Telegram ID"] || row["Telegram"] || "").trim(),
-          twitter: String(row["Twitter ID"] || row["Twitter"] || "").trim(),
+          name,
+          email,
+          phone: phone || undefined,
+          company: company || "Celestialabs",
+          role: role || "Member",
+          pitch: pitch || undefined,
+          telegram: telegram || undefined,
+          twitter: twitter || undefined,
+          linkedin: linkedin || undefined,
         });
       }
     });
