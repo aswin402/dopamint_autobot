@@ -14,6 +14,7 @@ import prisma from "../../lib/prisma";
 import { streamAgentChat } from "../../lib/ai/minimax";
 import { parseDocument } from "../../lib/parsers";
 import automationRunner, { DEFAULT_PACING } from "../../lib/automation/runner";
+import { handleAgentChat } from "../../lib/ai/agent-chat";
 
 const app = new Hono();
 const PORT = Number(process.env.BACKEND_PORT || process.env.PORT || 4000);
@@ -300,226 +301,14 @@ app.post("/api/registrations/override", async (c) => {
 app.post("/api/chat", async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const { messages, isVisualMode: clientVisualMode } = body;
+    const { messages } = body;
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return c.json({ error: "Invalid request. 'messages' array is required." }, 400);
     }
 
-    const lastMsg = messages[messages.length - 1]?.content || "";
-
-    // Handle Google Sheets switch / update directly from chat
-    const sheetMatch = lastMsg.match(/https:\/\/docs\.google\.com\/spreadsheets\/d\/[a-zA-Z0-9-_]+/i);
-    if (sheetMatch && (/sheet|spreadsheet|sync|track|url|link/i.test(lastMsg) || /change|set|use|update|switch/i.test(lastMsg))) {
-      const newUrl = sheetMatch[0];
-      const active = await prisma.sheetConfig.findFirst({ where: { isActive: true } });
-      if (active) {
-        await prisma.sheetConfig.update({
-          where: { id: active.id },
-          data: { spreadsheetUrl: newUrl, lastStatus: "ready", lastMessage: "Updated via Chat Assistant" },
-        });
-      } else {
-        await prisma.sheetConfig.create({
-          data: {
-            name: "Primary Registration Sheet",
-            spreadsheetUrl: newUrl,
-            sheetName: "Registrations",
-            syncDirection: "two_way",
-            autoSync: false,
-            frequency: "manual",
-            isActive: true,
-            lastStatus: "ready",
-            lastMessage: "Configured via Chat Assistant",
-          },
-        });
-      }
-      return c.json({
-        response: `📋 **Target Google Spreadsheet Updated!**\n\n- **New Spreadsheet URL:** [${newUrl}](${newUrl})\n- **Status:** Linked and set as active target\n\nThe automation engine and Google Sheets Sync deck are now pointed to this spreadsheet. Any batch registrations or attendee syncs will read/write to this document.`,
-        actionTaken: "updated_spreadsheet",
-        spreadsheetUrl: newUrl,
-      });
-    }
-
-    const [attendees, openEvents, confirmedRegs] = await Promise.all([
-      prisma.attendee.findMany({
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          company: true,
-          telegram: true,
-          twitter: true,
-          linkedin: true,
-          wallets: true,
-        },
-      }),
-      prisma.event.findMany({
-        where: {
-          soldOut: false,
-          url: { startsWith: "http" },
-        },
-        take: 15,
-      }),
-      prisma.registration.count({ where: { status: "confirmed_success" } }),
-    ]);
-
-    // Check if user provided custom target URLs for form automation (1 or N URLs)
-    const allUrls = Array.from(lastMsg.matchAll(/https?:\/\/[^\s"'<>]+/gi))
-      .map((m: any) => (m[0] as string).replace(/[\.,\)]+$/, ""))
-      .filter((u) => !u.includes("google.com/spreadsheets"));
-
-    if (allUrls.length > 0 && /automate|fill|form|run|submit|register|send/i.test(lastMsg)) {
-      const isVisual = /visual|watch|headed|live/i.test(lastMsg) || Boolean(clientVisualMode);
-
-      // Parse payload from user message or fallback to matched attendee
-      const customData: Record<string, any> = {};
-
-      // Name extract
-      const nameMatch = lastMsg.match(/(?:name|my name is|for)\s*[:=]?\s*([a-zA-Z\s]+?)(?:,|;|\n|\.|\bemail\b|\bphone\b|\bmessage\b|$)/i);
-      if (nameMatch && nameMatch[1].trim() && !/http|fill|form/i.test(nameMatch[1])) {
-        customData.name = nameMatch[1].trim();
-      }
-
-      // Email extract
-      const emailMatch = lastMsg.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
-      if (emailMatch) {
-        customData.email = emailMatch[1].trim();
-      }
-
-      // Phone extract
-      const phoneMatch = lastMsg.match(/(?:phone|number|mobile|tel)\s*[:=]?\s*([+0-9\s-]{8,15})/i) || lastMsg.match(/\b([0-9]{10})\b/);
-      if (phoneMatch) {
-        customData.phone = phoneMatch[1].trim();
-      }
-
-      // Message extract
-      const msgMatch = lastMsg.match(/(?:message|msg|notes|query|pitch|body)\s*[:=]?\s*["']?([^"'\n,;]+)["']?/i);
-      if (msgMatch) {
-        customData.message = msgMatch[1].trim();
-      }
-
-      // If fields are missing, merge from default or matched attendee
-      const matchedAttendee =
-        attendees.find((a) => (customData.email && a.email === customData.email) || (customData.name && a.name.toLowerCase().includes(customData.name.toLowerCase()))) ||
-        attendees[0];
-
-      if (matchedAttendee) {
-        if (!customData.name) customData.name = matchedAttendee.name;
-        if (!customData.email) customData.email = matchedAttendee.email;
-        if (!customData.phone && (matchedAttendee as any).phone) customData.phone = (matchedAttendee as any).phone;
-        if (!customData.message) customData.message = "Hello, I am interested in connecting!";
-      }
-
-      if (allUrls.length > 1) {
-        // Multi-target batch matrix run
-        const targets = allUrls.map((u, i) => ({ url: u, title: `Target Form #${i + 1}` }));
-        automationRunner.runMatrixBatch(targets, [customData], {
-          headless: !isVisual,
-          pacingDelaySec: 8,
-          preSubmitDelayMs: 1500,
-        });
-
-        return c.json({
-          response: `🚀 **Multi-Target Matrix Automation Launched!**\n\n- **Target URLs Queued (${targets.length}):**\n${targets
-            .map((t) => `  - [${t.url}](${t.url})`)
-            .join("\n")}\n- **Profile Payload:**\n  - **Name:** \`${customData.name || "N/A"}\`\n  - **Email:** \`${
-            customData.email || "N/A"
-          }\`\n  - **Phone:** \`${customData.phone || "N/A"}\`\n  - **Message:** \`${customData.message || "N/A"}\`\n- **Browser Mode:** ${
-            isVisual
-              ? "👁️ **Visual Headed Browser Mode (Chromium On-Screen with 150ms slowMo)**"
-              : "⚡ Headless Non-Bot Stealth Mode"
-          }\n- **Anti-Bot Pacing:** 8s natural cadence between submissions.\n\n✨ The autonomous agent is iterating through all ${
-            targets.length
-          } forms, inspecting each DOM semantically, and submitting without hardcoded selectors. You can monitor live progress and logs in the **Live Automation Monitor** on the right!`,
-          actionTaken: "launched_matrix_batch",
-          triggered: true,
-          targets,
-          customData,
-        });
-      } else {
-        // Single target runner
-        const targetUrl = allUrls[0];
-        automationRunner.runCustomForm(targetUrl, customData, {
-          headless: !isVisual,
-          preSubmitDelayMs: 1500,
-        });
-
-        return c.json({
-          response: `🚀 **Autonomous Form Automation Launched!**\n\n- **Target URL:** [${targetUrl}](${targetUrl})\n- **Form Payload Extracted:**\n  - **Name:** \`${customData.name || "N/A"}\`\n  - **Email:** \`${customData.email || "N/A"}\`\n  - **Phone:** \`${customData.phone || "N/A"}\`\n  - **Message:** \`${customData.message || "N/A"}\`\n- **Browser Mode:** ${
-            isVisual
-              ? "👁️ **Visual Headed Browser Mode (Chromium On-Screen with 150ms slowMo)**"
-              : "⚡ Headless Non-Bot Stealth Mode"
-          }\n\n✨ The autonomous agent is now inspecting the target DOM, mapping fields with zero hardcoded selectors, and executing live submission. You can monitor the real-time KPIs and logs in the **Live Automation Monitor** on the right!`,
-          actionTaken: "launched_custom_form",
-          triggered: true,
-          targetUrl,
-          customData,
-        });
-      }
-    }
-
-    // Check if user specifically requested to start/launch/run registration
-    const isTriggerRequest =
-      /start|launch|register|run batch|begin registration|automate|fill form/i.test(lastMsg) &&
-      !/how to|can you explain|why|what is/i.test(lastMsg);
-
-    if (isTriggerRequest) {
-      // Find matching attendee
-      const lower = lastMsg.toLowerCase();
-      const matchedAttendee =
-        attendees.find((a) => {
-          const fullName = a.name.toLowerCase().trim();
-          if (fullName && lower.includes(fullName)) return true;
-          const firstName = fullName.split(/\s+/)[0];
-          if (firstName && firstName.length >= 3 && new RegExp(`\\b${firstName}\\b`, "i").test(lower)) return true;
-          if (a.email && lower.includes(a.email.toLowerCase())) return true;
-          return false;
-        }) ||
-        attendees[0];
-
-      const isVisual =
-        /visual|watch|headed|live/i.test(lastMsg) || Boolean(clientVisualMode);
-
-      if (matchedAttendee && openEvents.length > 0) {
-        // Start the runner!
-        automationRunner.startBatch(
-          openEvents.map((e) => e.id),
-          [matchedAttendee.id],
-          DEFAULT_PACING,
-          { headless: !isVisual }
-        );
-
-        return c.json({
-          response: `🚀 **Live Automation Triggered for ${matchedAttendee.name}!**\n\n- **Target Attendee:** ${matchedAttendee.name} (\`${matchedAttendee.email}\`)\n- **Role & Company:** ${matchedAttendee.role} at ${matchedAttendee.company}\n- **Browser Mode:** ${
-            isVisual
-              ? "👁️ **Live Visual Window (Chromium Launched On-Screen with 150ms slowMo)**"
-              : "Headless Background Execution"
-          }\n- **Catalog:** ${openEvents.length} open events queued with 18s–26s anti-bot pacing.\n\n${
-            isVisual
-              ? "✨ Look at your desktop! The physical Chromium window has opened and is now filling registration forms live before your eyes."
-              : "The batch is running safely in the background."
-          }\n\nYou can also monitor live console output in the **Automation Deck → Live Terminal** tab!`,
-          actionTaken: "launched_automation",
-          triggered: true,
-          attendee: matchedAttendee,
-        });
-      }
-    }
-
-    const contextData = {
-      attendees,
-      eventsCount: openEvents.length,
-      confirmedRegistrations: confirmedRegs,
-      runnerStatus: automationRunner.getStatus(),
-    };
-
-    const completion = await streamAgentChat(messages, contextData);
-
-    return c.json({
-      response: completion.text,
-      isMock: completion.isMock,
-    });
+    const agentResult = await handleAgentChat(body);
+    return c.json(agentResult);
   } catch (err: any) {
     console.error("[Hono] Chat API error:", err);
     return c.json({ error: err.message || "Failed to generate AI response" }, 500);
@@ -783,6 +572,16 @@ app.post("/api/automation/inspect", async (c) => {
     return c.json(result);
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
+  }
+});
+
+app.post("/api/automation/heal-retry", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const result = await automationRunner.healAndRetry(body);
+    return c.json(result);
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
   }
 });
 

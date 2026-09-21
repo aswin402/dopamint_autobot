@@ -17,6 +17,13 @@ import {
   RefreshCw,
   CornerDownLeft,
   Play,
+  Pause,
+  Square,
+  Wrench,
+  Activity,
+  Search,
+  Sliders,
+  ShieldCheck,
   Eye,
   EyeOff,
   History,
@@ -49,6 +56,15 @@ interface Message {
   timestamp: string;
   attachments?: Attachment[];
   showActionButton?: boolean;
+  actionTaken?: string;
+  diagnostic?: {
+    error?: string;
+    rootCause?: string;
+    fixApplied?: string;
+    retrying?: boolean;
+  };
+  inspection?: any;
+  targetUrl?: string;
 }
 
 interface AutomationSessionItem {
@@ -102,6 +118,7 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
   const [currentSessionId, setCurrentSessionId] = useState<string>(`session_${Date.now()}`);
   const [isHistoryOpen, setIsHistoryOpen] = useState(true);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [runnerLiveStatus, setRunnerLiveStatus] = useState<any>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -189,6 +206,7 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
         const res = await fetch("/api/automation/status", { cache: "no-store" });
         if (res.ok) {
           const status = await res.json();
+          setRunnerLiveStatus(status);
           if (
             prevRunnerRunningRef.current &&
             !status.isRunning &&
@@ -377,6 +395,9 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
       if (data.triggered) {
         refreshData();
       }
+      if (data.status) {
+        setRunnerLiveStatus(data.status);
+      }
 
       const isRegistrationIntent = /register|batch|automate|start|fill|run/i.test(text);
 
@@ -386,6 +407,10 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
         content: data.response || "I have received your request.",
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         showActionButton: !data.triggered && isRegistrationIntent,
+        actionTaken: data.actionTaken,
+        diagnostic: data.diagnostic,
+        inspection: data.inspection,
+        targetUrl: data.targetUrl || (data.targets && data.targets[0]?.url),
       };
 
       const finalMessages = [...newMessages, assistantMessage];
@@ -616,24 +641,105 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
 
       {/* 2. Center Chat Workspace Canvas */}
       <div className="flex-1 flex flex-col h-full min-w-0 px-4 md:px-6 max-w-4xl mx-auto w-full relative overflow-hidden">
-        {/* Floating Open History Button when History is Closed */}
-        {!isHistoryOpen && (
-          <div className="pt-2 pb-0 flex items-center">
-            <button
-              onClick={() => setIsHistoryOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-border/80 bg-card hover:bg-muted text-xs text-muted-foreground hover:text-foreground transition-all shadow-2xs cursor-pointer group"
-              title="Open Session History"
-            >
-              <History className="w-3.5 h-3.5 text-primary group-hover:scale-110 transition-transform" />
-              <span className="font-medium">History</span>
-              {sessions.length > 0 && (
-                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-primary/10 text-primary font-bold">
-                  {sessions.length}
+        {/* Floating Open History & Live Runner Status Header Bar */}
+        <div className="pt-2.5 pb-2 flex flex-wrap items-center justify-between gap-2 border-b border-border/40">
+          <div className="flex items-center gap-2">
+            {!isHistoryOpen && (
+              <button
+                onClick={() => setIsHistoryOpen(true)}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-border/80 bg-card hover:bg-muted text-xs text-muted-foreground hover:text-foreground transition-all shadow-2xs cursor-pointer group"
+                title="Open Session History"
+              >
+                <History className="w-3.5 h-3.5 text-primary group-hover:scale-110 transition-transform" />
+                <span className="font-medium">History</span>
+                {sessions.length > 0 && (
+                  <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-primary/10 text-primary font-bold">
+                    {sessions.length}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {/* Live Runner Status Pill */}
+            {runnerLiveStatus?.isRunning ? (
+              <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                 </span>
-              )}
-            </button>
+                <span>Active: {runnerLiveStatus.progress?.percent || 0}%</span>
+                <span className="text-[10px] opacity-80 hidden sm:inline">
+                  ({runnerLiveStatus.progress?.completed}/{runnerLiveStatus.progress?.total})
+                </span>
+              </div>
+            ) : runnerLiveStatus?.isPaused ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-600 dark:text-amber-400 text-xs font-semibold">
+                <Pause className="w-3 h-3" />
+                <span>Paused ({runnerLiveStatus.progress?.percent || 0}%)</span>
+              </div>
+            ) : runnerLiveStatus?.lastFailure ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-medium">
+                <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                <span className="truncate max-w-[200px] sm:max-w-[280px]">
+                  Error: {runnerLiveStatus.lastFailure.errorMessage}
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-muted/60 text-muted-foreground text-xs font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />
+                <span>Agent Standby</span>
+              </div>
+            )}
           </div>
-        )}
+
+          {/* Controls in top bar */}
+          <div className="flex items-center gap-1.5">
+            {runnerLiveStatus?.isRunning ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onPauseAutomation}
+                  className="h-7 px-2.5 text-xs rounded-xl gap-1 cursor-pointer"
+                  title="Pause active automation"
+                >
+                  <Pause className="w-3 h-3" />
+                  <span>Pause</span>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onStopAutomation}
+                  className="h-7 px-2.5 text-xs rounded-xl text-rose-500 border-rose-500/30 hover:bg-rose-500/10 gap-1 cursor-pointer"
+                  title="Stop automation"
+                >
+                  <Square className="w-3 h-3" />
+                  <span>Stop</span>
+                </Button>
+              </>
+            ) : runnerLiveStatus?.isPaused ? (
+              <Button
+                size="sm"
+                onClick={onResumeAutomation}
+                className="h-7 px-2.5 text-xs rounded-xl gap-1 bg-primary text-primary-foreground cursor-pointer"
+                title="Resume execution"
+              >
+                <Play className="w-3 h-3" />
+                <span>Resume</span>
+              </Button>
+            ) : runnerLiveStatus?.lastFailure ? (
+              <Button
+                size="sm"
+                onClick={() => handleSend("Why did it fail? Fix the error and retry")}
+                className="h-7 px-2.5 text-xs rounded-xl gap-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold cursor-pointer shadow-xs"
+                title="Diagnose issue and auto-heal retry"
+              >
+                <Wrench className="w-3 h-3" />
+                <span>Auto-Fix & Retry</span>
+              </Button>
+            ) : null}
+          </div>
+        </div>
         {/* Messages Scroll Area or Welcome Hero */}
         <div className="flex-1 overflow-y-auto py-6 space-y-6 scroll-smooth sleek-scrollbar pr-1">
           {messages.length === 0 ? (
@@ -715,6 +821,88 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
                     }`}
                   >
                     <div className="whitespace-pre-wrap">{msg.content}</div>
+
+                    {/* Self-Healing Diagnostic Card */}
+                    {msg.diagnostic && (
+                      <div className="mt-3.5 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 space-y-2 text-xs shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 font-bold text-amber-600 dark:text-amber-400">
+                            <Wrench className="w-3.5 h-3.5" />
+                            <span>Self-Healing Action Report</span>
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-700 dark:text-amber-300 font-semibold">
+                            Auto-Retry Active
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-foreground space-y-1">
+                          <div><strong className="text-amber-600 dark:text-amber-400">Root Cause:</strong> {msg.diagnostic.rootCause}</div>
+                          <div><strong className="text-emerald-600 dark:text-emerald-400">Fix Applied:</strong> {msg.diagnostic.fixApplied}</div>
+                        </div>
+                        <div className="pt-1 flex items-center justify-between text-[10px] text-muted-foreground border-t border-amber-500/20">
+                          <span>👁️ Visual mode active for verification</span>
+                          <span className="font-semibold text-emerald-600 dark:text-emerald-400">Executing...</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Form Inspection Card */}
+                    {msg.actionTaken === "inspected_form" && msg.inspection && (
+                      <div className="mt-3.5 p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/30 space-y-2 text-xs shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 font-bold text-cyan-600 dark:text-cyan-400">
+                            <Search className="w-3.5 h-3.5" />
+                            <span>DOM Analysis Verified</span>
+                          </div>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-semibold">
+                            {msg.inspection.fields?.length || 0} Fields Mapped
+                          </span>
+                        </div>
+                        <Button
+                          size="sm"
+                          onClick={() => handleSend(`Automate form at ${msg.inspection.url}`)}
+                          className="w-full mt-1 text-xs gap-1.5 h-8 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold cursor-pointer shadow-xs rounded-xl"
+                        >
+                          <Play className="w-3 h-3" />
+                          <span>Automate This Form Now</span>
+                        </Button>
+                      </div>
+                    )}
+
+                    {/* Status Card Quick Controls */}
+                    {msg.actionTaken === "live_status_report" && (
+                      <div className="mt-3 pt-2.5 border-t border-border/60 flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleSend("What's happening with the automation right now?")}
+                          className="text-xs h-7 px-2.5 rounded-xl gap-1 text-primary hover:bg-primary/10 cursor-pointer"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          <span>Refresh Status</span>
+                        </Button>
+                        {runnerLiveStatus?.isRunning && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={onPauseAutomation}
+                            className="text-xs h-7 px-2.5 rounded-xl gap-1 text-amber-500 hover:bg-amber-500/10 cursor-pointer"
+                          >
+                            <Pause className="w-3 h-3" />
+                            <span>Pause</span>
+                          </Button>
+                        )}
+                        {runnerLiveStatus?.lastFailure && (
+                          <Button
+                            size="sm"
+                            onClick={() => handleSend("Why did it fail? Fix the error and retry")}
+                            className="text-xs h-7 px-2.5 rounded-xl gap-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold cursor-pointer shadow-xs"
+                          >
+                            <Wrench className="w-3 h-3" />
+                            <span>Fix & Retry</span>
+                          </Button>
+                        )}
+                      </div>
+                    )}
 
                     {msg.showActionButton && onTriggerAutomation && (
                       <div className="mt-3.5 p-3.5 rounded-2xl bg-muted/70 border border-border/80 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
@@ -820,7 +1008,76 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
         )}
 
         {/* Floating Bottom Input Area (ChatGPT Style) */}
-        <div className="pb-6 pt-2">
+        <div className="pb-6 pt-1 space-y-2">
+          {/* Quick Action Chips Bar */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 sleek-scrollbar select-none">
+            <button
+              type="button"
+              onClick={() => handleSend("What's happening with the automation right now?")}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-card hover:bg-muted border border-border/70 text-xs text-muted-foreground hover:text-foreground shrink-0 transition-all shadow-2xs active:scale-95 cursor-pointer"
+            >
+              <Activity className="w-3.5 h-3.5 text-primary" />
+              <span>What&apos;s happening?</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSend("Why did it fail? Fix the error and retry")}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs shrink-0 transition-all shadow-2xs active:scale-95 cursor-pointer ${
+                runnerLiveStatus?.lastFailure
+                  ? "bg-amber-500/10 border-amber-500/40 text-amber-600 dark:text-amber-400 font-semibold"
+                  : "bg-card hover:bg-muted border-border/70 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Wrench className="w-3.5 h-3.5 text-amber-500" />
+              <span>Fix & Retry</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleSend("Inspect form fields on https://mowli.in/")}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-card hover:bg-muted border border-border/70 text-xs text-muted-foreground hover:text-foreground shrink-0 transition-all shadow-2xs active:scale-95 cursor-pointer"
+            >
+              <Search className="w-3.5 h-3.5 text-cyan-500" />
+              <span>Inspect Form</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() =>
+                handleSend(
+                  "Automate form at https://mowli.in/ with name: Alex Morgan, email: alex@company.com, phone: 555-0199, message: Hello from Dopamint Autonomous Agent in visual mode"
+                )
+              }
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-card hover:bg-muted border border-border/70 text-xs text-muted-foreground hover:text-foreground shrink-0 transition-all shadow-2xs active:scale-95 cursor-pointer"
+            >
+              <Play className="w-3.5 h-3.5 text-emerald-500" />
+              <span>Run Form (mowli.in)</span>
+            </button>
+
+            {runnerLiveStatus?.isRunning && (
+              <button
+                type="button"
+                onClick={onPauseAutomation}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs shrink-0 transition-all shadow-2xs active:scale-95 cursor-pointer"
+              >
+                <Pause className="w-3.5 h-3.5" />
+                <span>Pause</span>
+              </button>
+            )}
+
+            {runnerLiveStatus?.isPaused && (
+              <button
+                type="button"
+                onClick={onResumeAutomation}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs shrink-0 transition-all shadow-2xs active:scale-95 cursor-pointer"
+              >
+                <Play className="w-3.5 h-3.5" />
+                <span>Resume</span>
+              </button>
+            )}
+          </div>
+
           <div className="relative bg-card rounded-[22px] border border-border focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/10 transition-all shadow-sm">
             {/* Selected Attachments Bar */}
             {attachments.length > 0 && (

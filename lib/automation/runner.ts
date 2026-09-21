@@ -103,6 +103,18 @@ export interface MatrixRunResult {
   results: MatrixItemResult[];
 }
 
+export interface FailureRecord {
+  timestamp: string;
+  url: string;
+  profileName?: string;
+  profileEmail?: string;
+  payload?: Record<string, any>;
+  errorMessage: string;
+  type: "custom_form" | "matrix_batch" | "catalog_batch";
+  options?: any;
+  suggestedFix?: string;
+}
+
 class AutomationRunner {
   private isRunning: boolean = false;
   private isPaused: boolean = false;
@@ -124,6 +136,10 @@ class AutomationRunner {
     timestamp: string;
   }> = [];
   private listeners: ((log: RunnerLog) => void)[] = [];
+
+  // Self-Healing & Failure Tracking State
+  private lastFailure: FailureRecord | null = null;
+  private currentPacing: PacingConfig = { ...DEFAULT_PACING };
 
   // Live Inbuilt Screen & Human-in-the-Loop State
   private activePage: Page | null = null;
@@ -178,6 +194,8 @@ class AutomationRunner {
       },
       recentConfirmations: this.recentConfirmations.slice(0, 10),
       recentLogs: this.logs.slice(-60),
+      lastFailure: this.lastFailure,
+      pacing: this.currentPacing,
     };
   }
 
@@ -361,7 +379,97 @@ class AutomationRunner {
     this.humanInterventionReason = null;
     this.isPaused = false;
     this.isRunning = false;
+    this.lastFailure = null;
     return this.getStatus();
+  }
+
+  public recordFailure(
+    url: string,
+    errorMessage: string,
+    type: "custom_form" | "matrix_batch" | "catalog_batch",
+    payload?: Record<string, any>,
+    options?: any
+  ) {
+    let suggestedFix = "Check network connectivity and form accessibility.";
+    const lower = (errorMessage || "").toLowerCase();
+    if (lower.includes("submit") || lower.includes("button") || lower.includes("not detected")) {
+      suggestedFix = "Increase preSubmitDelayMs to 3500ms to allow dynamic DOM rendering, and enable visual browser mode.";
+    } else if (lower.includes("timeout") || lower.includes("timed out")) {
+      suggestedFix = "Increase navigation timeout and preSubmitDelayMs to 4000ms for slow-loading scripts.";
+    } else if (lower.includes("captcha") || lower.includes("turnstile") || lower.includes("challenge") || lower.includes("cloudflare")) {
+      suggestedFix = "Switch to Visual Headed Browser Mode with 150ms slowMo to solve the challenge in the live screen.";
+    } else if (lower.includes("field") || lower.includes("required")) {
+      suggestedFix = "Sanitize attendee profile data and supply missing phone/name/message fields.";
+    }
+
+    this.lastFailure = {
+      timestamp: new Date().toISOString(),
+      url,
+      profileName: payload?.name || payload?.fullName || this.currentAttendee?.name,
+      profileEmail: payload?.email || this.currentAttendee?.email,
+      payload,
+      errorMessage,
+      type,
+      options,
+      suggestedFix,
+    };
+    this.log(`⚠️ Failure logged for ${url}: ${errorMessage}`, "warn");
+  }
+
+  public getLastFailure(): FailureRecord | null {
+    return this.lastFailure;
+  }
+
+  public clearLastFailure() {
+    this.lastFailure = null;
+  }
+
+  public updatePacing(newPacing: Partial<PacingConfig>) {
+    this.currentPacing = { ...this.currentPacing, ...newPacing };
+    this.log(`⚙️ Pacing configuration updated: ${JSON.stringify(newPacing)}`, "info");
+    return this.currentPacing;
+  }
+
+  public getPacing(): PacingConfig {
+    return this.currentPacing;
+  }
+
+  public async healAndRetry(overrides: {
+    headless?: boolean;
+    slowMo?: number;
+    preSubmitDelayMs?: number;
+    dataPatch?: Record<string, any>;
+  } = {}) {
+    if (!this.lastFailure) {
+      return { success: false, message: "No previous failure recorded to self-heal and retry." };
+    }
+    if (this.isRunning) {
+      return { success: false, message: "Automation runner is currently running. Please wait or stop first." };
+    }
+
+    const failure = { ...this.lastFailure };
+    const targetUrl = failure.url;
+    const patchedData = { ...(failure.payload || {}), ...(overrides.dataPatch || {}) };
+
+    // Determine intelligent self-healing parameters
+    const preSubmitDelayMs =
+      overrides.preSubmitDelayMs ??
+      Math.max(3500, (failure.options?.preSubmitDelayMs || 1500) + 1500);
+    const isHeadless = overrides.headless !== undefined ? overrides.headless : false;
+    const slowMo = overrides.slowMo ?? 150;
+
+    this.log(`🩺 Self-Healing Diagnostics: Triggered retry for ${targetUrl}`, "info");
+    this.log(
+      `🩺 Healing adjustments: preSubmitDelayMs=${preSubmitDelayMs}ms, headless=${isHeadless}, slowMo=${slowMo}ms`,
+      "info"
+    );
+
+    // Run custom form with healed parameters
+    return this.runCustomForm(targetUrl, patchedData, {
+      headless: isHeadless,
+      slowMo,
+      preSubmitDelayMs,
+    });
   }
 
   public async persistSession(statusOverride?: string) {
@@ -728,10 +836,12 @@ class AutomationRunner {
                 });
               } else {
                 this.failedCount++;
+                this.recordFailure(ev.url, `Registration returned unconfirmed status: ${status}`, "catalog_batch", person, { eventId: ev.id });
               }
             }
           } catch (err: any) {
             this.failedCount++;
+            this.recordFailure(ev.url, err.message, "catalog_batch", person, { eventId: ev.id });
             this.log(`⚠️ Error on Event #${ev.id} for ${person.name}: ${err.message}`, "error");
           } finally {
             page.off("response", responseHandler);
@@ -1368,12 +1478,14 @@ class AutomationRunner {
       } else {
         this.failedCount++;
         this.completedItems++;
+        this.recordFailure(url, result.message, "custom_form", data, options);
         this.log(`❌ ${result.message} on ${url}`, "error");
       }
       return result;
     } catch (err: any) {
       this.failedCount++;
       this.completedItems++;
+      this.recordFailure(url, err.message, "custom_form", data, options);
       this.log(`❌ Automation error on ${url}: ${err.message}`, "error");
       return { success: false, verified: false, message: err.message };
     } finally {
@@ -1576,6 +1688,7 @@ class AutomationRunner {
           } else {
             this.failedCount++;
             this.completedItems++;
+            this.recordFailure(target.url, taskMessage, "matrix_batch", profile, options);
             this.log(
               `❌ [Task ${index}/${queue.length} FAILED] Could not submit "${target.url}" for ${attendeeName}: ${taskMessage}`,
               "error"
@@ -1585,6 +1698,7 @@ class AutomationRunner {
           this.failedCount++;
           this.completedItems++;
           taskMessage = taskErr.message;
+          this.recordFailure(target.url, taskErr.message, "matrix_batch", profile, options);
           this.log(
             `❌ [Task ${index}/${queue.length} ERROR] Error submitting "${target.url}" for ${attendeeName}: ${taskErr.message}`,
             "error"
