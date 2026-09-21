@@ -402,7 +402,6 @@ app.post("/api/chat", async (c) => {
       // If fields are missing, merge from default or matched attendee
       const matchedAttendee =
         attendees.find((a) => (customData.email && a.email === customData.email) || (customData.name && a.name.toLowerCase().includes(customData.name.toLowerCase()))) ||
-        attendees.find((a) => a.email === "aswinvishal402@gmail.com") ||
         attendees[0];
 
       if (matchedAttendee) {
@@ -477,7 +476,6 @@ app.post("/api/chat", async (c) => {
           if (a.email && lower.includes(a.email.toLowerCase())) return true;
           return false;
         }) ||
-        attendees.find((a) => a.email === "aswinvishal402@gmail.com") ||
         attendees[0];
 
       const isVisual =
@@ -785,6 +783,144 @@ app.post("/api/automation/inspect", async (c) => {
     return c.json(result);
   } catch (err: any) {
     return c.json({ error: err.message }, 500);
+  }
+});
+
+// --------------------------------------------------------------------------
+// Automation Session History & Management API
+// --------------------------------------------------------------------------
+app.get("/api/automation/sessions", async (c) => {
+  try {
+    const jobs = await prisma.automationJob.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        targetUrl: true,
+        totalTarget: true,
+        totalConfirmed: true,
+        totalFailed: true,
+        messages: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    const runnerStatus = automationRunner.getStatus();
+
+    return c.json({
+      success: true,
+      currentSession: {
+        id: runnerStatus.sessionId,
+        title: runnerStatus.sessionTitle,
+        isArchivedView: runnerStatus.isArchivedView,
+        isRunning: runnerStatus.isRunning,
+      },
+      sessions: jobs.map((j) => {
+        let msgCount = 0;
+        try {
+          if (j.messages) {
+            const parsed = JSON.parse(j.messages);
+            msgCount = Array.isArray(parsed) ? parsed.length : 0;
+          }
+        } catch {}
+        return {
+          id: j.id,
+          title: j.title || "Automation Run",
+          status: j.status,
+          targetUrl: j.targetUrl,
+          totalTarget: j.totalTarget,
+          totalConfirmed: j.totalConfirmed,
+          totalFailed: j.totalFailed,
+          messageCount: msgCount,
+          createdAt: j.createdAt,
+          updatedAt: j.updatedAt,
+        };
+      }),
+    });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+app.post("/api/automation/sessions", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { action, id, title, messages } = body;
+
+    if (action === "reset") {
+      const newSessionId = id || `session_${Date.now()}`;
+      const status = automationRunner.resetActiveSession(newSessionId, title || "New Automation Session");
+      return c.json({
+        success: true,
+        message: "Active session reset to clean standby state",
+        sessionId: newSessionId,
+        status,
+      });
+    }
+
+    if (action === "load") {
+      if (!id) {
+        return c.json({ success: false, error: "Session ID is required" }, 400);
+      }
+      const job = await prisma.automationJob.findUnique({ where: { id } });
+      if (!job) {
+        return c.json({ success: false, error: "Session not found" }, 404);
+      }
+      const status = automationRunner.loadArchivedSession(job);
+      let parsedMessages: any[] = [];
+      try {
+        if (job.messages) {
+          parsedMessages = typeof job.messages === "string" ? JSON.parse(job.messages) : job.messages;
+        }
+      } catch {}
+      return c.json({
+        success: true,
+        message: "Archived session loaded",
+        session: { ...job, parsedMessages },
+        status,
+      });
+    }
+
+    if (action === "save_messages") {
+      const targetId = id || automationRunner.getStatus().sessionId;
+      if (!targetId) {
+        return c.json({ success: false, error: "Target session ID required" }, 400);
+      }
+      const updated = await prisma.automationJob.upsert({
+        where: { id: targetId },
+        create: {
+          id: targetId,
+          title: title || "New Automation Session",
+          status: "idle",
+          messages: JSON.stringify(messages || []),
+        },
+        update: {
+          messages: JSON.stringify(messages || []),
+          ...(title ? { title } : {}),
+        },
+      });
+      return c.json({ success: true, updated });
+    }
+
+    return c.json({ success: false, error: "Unknown action" }, 400);
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+app.delete("/api/automation/sessions/:id", async (c) => {
+  try {
+    const id = c.req.param("id");
+    await prisma.automationJob.delete({ where: { id } });
+    if (automationRunner.getStatus().sessionId === id) {
+      automationRunner.resetActiveSession();
+    }
+    return c.json({ success: true, message: "Session deleted successfully" });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
   }
 });
 

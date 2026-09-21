@@ -117,9 +117,20 @@ export const AutomationMonitorPanel: React.FC<AutomationMonitorPanelProps> = ({
     fetchStatus();
     // Poll faster when running (1.5s), slower when idle (3.5s)
     const interval = setInterval(fetchStatus, status.isRunning ? 1500 : 3500);
+
+    const handleSessionUpdate = () => {
+      fetchStatus();
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("automation-session-updated", handleSessionUpdate);
+    }
+
     return () => {
       isMounted = false;
       clearInterval(interval);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("automation-session-updated", handleSessionUpdate);
+      }
     };
   }, [status.isRunning]);
 

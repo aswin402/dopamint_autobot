@@ -100,7 +100,7 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
               {metrics.totalEvents}
             </div>
             <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
-              <span>Luma, Token2049, KBW side events</span>
+              <span>Across all integrated platforms & URLs</span>
             </p>
           </CardContent>
         </Card>

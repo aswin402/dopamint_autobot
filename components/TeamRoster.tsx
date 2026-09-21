@@ -408,7 +408,7 @@ export const TeamRoster: React.FC<TeamRosterProps> = ({
                     required
                     value={formState.name}
                     onChange={(e) => setFormState({ ...formState, name: e.target.value })}
-                    placeholder="e.g. Aswin Vishal"
+                    placeholder="e.g. Alex Morgan"
                     className="w-full px-3 py-1.5 rounded-xl border border-border bg-background text-foreground text-xs focus:ring-2 focus:ring-primary focus:outline-none"
                   />
                 </div>
@@ -422,7 +422,7 @@ export const TeamRoster: React.FC<TeamRosterProps> = ({
                     required
                     value={formState.email}
                     onChange={(e) => setFormState({ ...formState, email: e.target.value })}
-                    placeholder="e.g. aswin@example.com"
+                    placeholder="e.g. alex@company.com"
                     className="w-full px-3 py-1.5 rounded-xl border border-border bg-background text-foreground text-xs focus:ring-2 focus:ring-primary focus:outline-none"
                   />
                 </div>
@@ -435,7 +435,7 @@ export const TeamRoster: React.FC<TeamRosterProps> = ({
                     type="text"
                     value={formState.role}
                     onChange={(e) => setFormState({ ...formState, role: e.target.value })}
-                    placeholder="e.g. Founder & CEO"
+                    placeholder="e.g. Operations Lead"
                     className="w-full px-3 py-1.5 rounded-xl border border-border bg-background text-foreground text-xs focus:ring-2 focus:ring-primary focus:outline-none"
                   />
                 </div>
@@ -446,7 +446,7 @@ export const TeamRoster: React.FC<TeamRosterProps> = ({
                     type="text"
                     value={formState.company}
                     onChange={(e) => setFormState({ ...formState, company: e.target.value })}
-                    placeholder="e.g. Dopamint Labs"
+                    placeholder="e.g. Acme Corp"
                     className="w-full px-3 py-1.5 rounded-xl border border-border bg-background text-foreground text-xs focus:ring-2 focus:ring-primary focus:outline-none"
                   />
                 </div>
@@ -470,7 +470,7 @@ export const TeamRoster: React.FC<TeamRosterProps> = ({
                     type="text"
                     value={formState.telegram}
                     onChange={(e) => setFormState({ ...formState, telegram: e.target.value })}
-                    placeholder="e.g. @aswinvishal"
+                    placeholder="e.g. @telegram_handle"
                     className="w-full px-3 py-1.5 rounded-xl border border-border bg-background text-foreground text-xs focus:ring-2 focus:ring-primary focus:outline-none"
                   />
                 </div>
@@ -483,7 +483,7 @@ export const TeamRoster: React.FC<TeamRosterProps> = ({
                     type="text"
                     value={formState.twitter}
                     onChange={(e) => setFormState({ ...formState, twitter: e.target.value })}
-                    placeholder="e.g. @aswinvishal"
+                    placeholder="e.g. @twitter_handle"
                     className="w-full px-3 py-1.5 rounded-xl border border-border bg-background text-foreground text-xs focus:ring-2 focus:ring-primary focus:outline-none"
                   />
                 </div>

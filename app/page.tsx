@@ -317,8 +317,18 @@ export default function Home() {
         setActiveTab={setActiveTab}
         honoStatus={honoStatus}
         activeJobRunning={runnerStatus.isRunning}
-        onNewTask={() => {
+        onNewTask={async () => {
           setActiveTab("chat");
+          try {
+            await fetch("/api/automation/sessions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "reset", title: "New Chat Session" }),
+            });
+            if (typeof window !== "undefined") {
+              window.dispatchEvent(new CustomEvent("automation-session-updated"));
+            }
+          } catch (e) {}
         }}
       />
 

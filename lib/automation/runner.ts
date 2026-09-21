@@ -133,6 +133,9 @@ class AutomationRunner {
   private isHumanInterventionNeeded: boolean = false;
   private humanInterventionReason: string | null = null;
   private cdpSession: CDPSession | null = null;
+  private currentSessionId: string = `session_${Date.now()}`;
+  private sessionTitle: string = "New Automation Session";
+  private isArchivedView: boolean = false;
 
   public getStatus() {
     const percent =
@@ -140,6 +143,9 @@ class AutomationRunner {
         ? Math.round((this.completedItems / this.totalItems) * 100)
         : 0;
     return {
+      sessionId: this.currentSessionId,
+      sessionTitle: this.sessionTitle,
+      isArchivedView: this.isArchivedView,
       isRunning: this.isRunning,
       isPaused: this.isPaused,
       isHeadless: this.isHeadless,
@@ -333,6 +339,115 @@ class AutomationRunner {
     this.log("⏹️ Runner stopped.", "warn");
   }
 
+  public resetActiveSession(newSessionId?: string, title?: string) {
+    this.currentSessionId = newSessionId || `session_${Date.now()}`;
+    this.sessionTitle = title || "New Automation Session";
+    this.isArchivedView = false;
+    this.activeJobId = null;
+    this.logs = [];
+    this.recentConfirmations = [];
+    this.totalItems = 0;
+    this.completedItems = 0;
+    this.successCount = 0;
+    this.failedCount = 0;
+    this.waitlistCount = 0;
+    this.skippedCount = 0;
+    this.currentEvent = null;
+    this.currentAttendee = null;
+    this.currentUrl = null;
+    this.currentTitle = null;
+    this.latestFrame = null;
+    this.isHumanInterventionNeeded = false;
+    this.humanInterventionReason = null;
+    this.isPaused = false;
+    this.isRunning = false;
+    return this.getStatus();
+  }
+
+  public async persistSession(statusOverride?: string) {
+    try {
+      if (!this.currentSessionId) return null;
+      const status =
+        statusOverride ||
+        (this.failedCount > 0 && this.successCount === 0
+          ? "failed"
+          : this.successCount > 0
+          ? "completed"
+          : this.isRunning
+          ? "running"
+          : "idle");
+
+      const title =
+        this.sessionTitle && this.sessionTitle !== "New Automation Session"
+          ? this.sessionTitle
+          : this.currentEvent?.title
+          ? `Event: ${this.currentEvent.title}`
+          : this.currentUrl
+          ? `Form: ${this.currentUrl}`
+          : "Automation Run";
+
+      return await prisma.automationJob.upsert({
+        where: { id: this.currentSessionId },
+        create: {
+          id: this.currentSessionId,
+          title,
+          status,
+          targetUrl: this.currentUrl || this.currentEvent?.url || null,
+          totalTarget: this.totalItems,
+          totalConfirmed: this.successCount,
+          totalFailed: this.failedCount,
+          logs: JSON.stringify(this.logs),
+          confirmations: JSON.stringify(this.recentConfirmations),
+          latestFrame: this.latestFrame,
+        },
+        update: {
+          title,
+          status,
+          targetUrl: this.currentUrl || this.currentEvent?.url || null,
+          totalTarget: this.totalItems,
+          totalConfirmed: this.successCount,
+          totalFailed: this.failedCount,
+          logs: JSON.stringify(this.logs),
+          confirmations: JSON.stringify(this.recentConfirmations),
+          latestFrame: this.latestFrame,
+        },
+      });
+    } catch (e) {
+      console.error("[Runner] Failed to persist session:", e);
+      return null;
+    }
+  }
+
+  public loadArchivedSession(job: any) {
+    this.currentSessionId = job.id;
+    this.sessionTitle = job.title || "Archived Session";
+    this.isArchivedView = true;
+    this.isRunning = false;
+    this.isPaused = false;
+    this.totalItems = job.totalTarget || 0;
+    this.completedItems = (job.totalConfirmed || 0) + (job.totalFailed || 0);
+    this.successCount = job.totalConfirmed || 0;
+    this.failedCount = job.totalFailed || 0;
+    this.currentUrl = job.targetUrl || null;
+    this.currentTitle = job.title || null;
+    this.latestFrame = job.latestFrame || null;
+    try {
+      this.logs = job.logs ? (typeof job.logs === "string" ? JSON.parse(job.logs) : job.logs) : [];
+    } catch {
+      this.logs = [];
+    }
+    try {
+      this.recentConfirmations = job.confirmations
+        ? typeof job.confirmations === "string"
+          ? JSON.parse(job.confirmations)
+          : job.confirmations
+        : [];
+    } catch {
+      this.recentConfirmations = [];
+    }
+    return this.getStatus();
+  }
+
   public async startBatch(
     eventIds: number[],
     attendeeIds: string[],
@@ -347,7 +462,12 @@ class AutomationRunner {
     this.isRunning = true;
     this.isPaused = false;
     this.isHeadless = options.headless !== undefined ? Boolean(options.headless) : true;
-    this.activeJobId = `job_${Date.now()}`;
+    this.isArchivedView = false;
+    this.currentSessionId = `session_events_${Date.now()}`;
+    this.sessionTitle = `Event Batch: ${eventIds.length} Events × ${attendeeIds.length} Members`;
+    this.activeJobId = this.currentSessionId;
+    this.logs = [];
+    this.recentConfirmations = [];
     this.totalItems = eventIds.length * attendeeIds.length;
     this.completedItems = 0;
     this.successCount = 0;
@@ -655,6 +775,7 @@ class AutomationRunner {
       this.currentEvent = null;
       this.currentAttendee = null;
       this.log("🎉 Automation batch finished!", "success");
+      await this.persistSession();
     }
   }
 
@@ -1156,7 +1277,12 @@ class AutomationRunner {
     this.isRunning = true;
     this.isPaused = false;
     this.isHeadless = options.headless !== undefined ? Boolean(options.headless) : true;
-    this.activeJobId = `job_custom_${Date.now()}`;
+    this.isArchivedView = false;
+    this.currentSessionId = `session_custom_${Date.now()}`;
+    this.sessionTitle = `Form: ${url}`;
+    this.activeJobId = this.currentSessionId;
+    this.logs = [];
+    this.recentConfirmations = [];
     this.totalItems = 1;
     this.completedItems = 0;
     this.successCount = 0;
@@ -1236,7 +1362,7 @@ class AutomationRunner {
         this.recentConfirmations.unshift({
           eventId: 99999,
           eventTitle: url,
-          attendeeName: data.name || "Aswin",
+          attendeeName: data.name || data.fullName || "Client",
           timestamp: new Date().toISOString(),
         });
       } else {
@@ -1264,6 +1390,7 @@ class AutomationRunner {
       this.currentEvent = null;
       this.currentAttendee = null;
       this.log("🏁 Custom form automation finished.", "info");
+      await this.persistSession();
     }
   }
 
@@ -1318,11 +1445,16 @@ class AutomationRunner {
     this.isRunning = true;
     this.isPaused = false;
     this.isHeadless = options.headless !== undefined ? options.headless : true;
+    this.isArchivedView = false;
+    this.currentSessionId = `session_matrix_${Date.now()}`;
+    this.sessionTitle = `Matrix Batch: ${targets.length} Forms × ${profiles.length} Profiles`;
+    this.activeJobId = this.currentSessionId;
+    this.logs = [];
+    this.recentConfirmations = [];
     this.totalItems = queue.length;
     this.completedItems = 0;
     this.successCount = 0;
     this.failedCount = 0;
-    this.activeJobId = `matrix_${Date.now()}`;
 
     this.log(
       `🏁 Starting Matrix Batch Automation: ${targets.length} target URLs × ${profiles.length} profiles = ${queue.length} tasks queued [${
@@ -1507,6 +1639,7 @@ class AutomationRunner {
         `🏁 Matrix Batch Completed! ${this.successCount} succeeded, ${this.failedCount} failed out of ${this.totalItems} total tasks.`,
         this.successCount > 0 ? "success" : "warn"
       );
+      await this.persistSession();
     }
 
     return {

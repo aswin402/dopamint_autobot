@@ -97,7 +97,6 @@ export async function POST(req: NextRequest) {
       const attendees = await prisma.attendee.findMany();
       const matchedAttendee =
         attendees.find((a) => (customData.email && a.email === customData.email) || (customData.name && a.name.toLowerCase().includes(customData.name.toLowerCase()))) ||
-        attendees.find((a) => a.email === "aswinvishal402@gmail.com") ||
         attendees[0];
 
       if (matchedAttendee) {
@@ -178,7 +177,6 @@ export async function POST(req: NextRequest) {
           if (a.email && lower.includes(a.email.toLowerCase())) return true;
           return false;
         }) ||
-        attendees.find((a) => a.email === "aswinvishal402@gmail.com") ||
         attendees[0];
 
       const isVisual =

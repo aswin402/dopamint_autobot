@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   Send,
   Paperclip,
@@ -19,6 +19,15 @@ import {
   Play,
   Eye,
   EyeOff,
+  History,
+  Plus,
+  Trash2,
+  Clock,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  MessageSquare,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -42,6 +51,19 @@ interface Message {
   showActionButton?: boolean;
 }
 
+interface AutomationSessionItem {
+  id: string;
+  title: string;
+  status: string;
+  targetUrl?: string | null;
+  totalTarget: number;
+  totalConfirmed: number;
+  totalFailed: number;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface ChatGPTViewProps {
   onTriggerAutomation?: (eventIds?: number[]) => void;
   onPauseAutomation?: () => void;
@@ -54,34 +76,6 @@ interface ChatGPTViewProps {
   onToggleVisualMode?: () => void;
   selectedAttendeeName?: string;
 }
-
-const PROMPT_SUGGESTIONS = [
-  {
-    title: "Universal Form Automation",
-    desc: "Automate contact form at https://mowli.in/ with custom details",
-    prompt: "Automate form at https://mowli.in/ with name: aswin, email: aswinvishal402@gmail.com, phone: 9384514564, message: hii in visual mode",
-  },
-  {
-    title: "Live Batch Registration",
-    desc: "Register Aswin Vishal for upcoming side events and watch live",
-    prompt: "Start batch registration for Aswin Vishal across the upcoming open events in visual browser mode.",
-  },
-  {
-    title: "Pipeline Status",
-    desc: "Check registration confirmations & pending waitlists",
-    prompt: "Provide a complete breakdown of registered events vs waitlisted events.",
-  },
-  {
-    title: "Anti-Bot & Form Audit",
-    desc: "Identify events requiring Web3 wallets or Turnstile verification",
-    prompt: "Which events have custom questions or require external wallet verification?",
-  },
-  {
-    title: "File Ingestion",
-    desc: "Import attendee roster from .csv, .docx, .xlsx, or .md",
-    prompt: "How can I upload a new team member roster spreadsheet to sync automatically?",
-  },
-];
 
 export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
   onTriggerAutomation,
@@ -103,9 +97,72 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
   const [isUploading, setIsUploading] = useState(false);
   const [uploadFeedback, setUploadFeedback] = useState<string | null>(null);
 
+  // Session History State
+  const [sessions, setSessions] = useState<AutomationSessionItem[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string>(`session_${Date.now()}`);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(true);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Dynamic Prompt Suggestions (Zero Hardcoded Personal Information)
+  const promptSuggestions = useMemo(() => {
+    const targetAttendee = selectedAttendeeName || attendees[0]?.name || "Team Member";
+    return [
+      {
+        title: "Universal Form Automation",
+        desc: "Fill and submit contact/inquiry forms with zero hardcoded selectors",
+        prompt: `Automate form at https://mowli.in/ with name: Alex Morgan, email: alex@company.com, phone: 555-0199, message: Hello from Dopamint Autonomous Agent in visual mode`,
+      },
+      {
+        title: "Live Batch Registration",
+        desc: `Register ${targetAttendee} for upcoming open events and watch live`,
+        prompt: `Start batch registration for ${targetAttendee} across the upcoming open events in visual browser mode.`,
+      },
+      {
+        title: "Pipeline Status",
+        desc: "Check registration confirmations & pending waitlists",
+        prompt: "Provide a complete breakdown of registered events vs waitlisted events.",
+      },
+      {
+        title: "Anti-Bot & Form Audit",
+        desc: "Identify events requiring Web3 wallets or Turnstile verification",
+        prompt: "Which events have custom questions or require external wallet verification?",
+      },
+      {
+        title: "File Ingestion",
+        desc: "Import attendee roster from .csv, .docx, .xlsx, or .md",
+        prompt: "How can I upload a new team member roster spreadsheet to sync automatically?",
+      },
+    ];
+  }, [selectedAttendeeName, attendees]);
+
+  // Fetch session history from API
+  const fetchSessions = async () => {
+    setIsLoadingSessions(true);
+    try {
+      const res = await fetch("/api/automation/sessions");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.sessions) {
+          setSessions(data.sessions);
+        }
+        if (data.currentSession?.id) {
+          setCurrentSessionId(data.currentSession.id);
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load automation session history:", e);
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSessions();
+  }, []);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -138,7 +195,7 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
             status.progress &&
             status.progress.completed > 0
           ) {
-            // Automation just completed! Notify user with sound, notification & in-chat message
+            // Automation completed
             playNotificationChime();
             const targetDesc =
               status.currentEvent?.title ||
@@ -157,7 +214,12 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
               }\n\nAll requested fields were populated using humanized keystroke pacing and anti-bot stealth evasion. Receipts and logs are accessible in the **Live Automation Monitor** panel on the right.`,
               timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
             };
-            setMessages((prev) => [...prev, notifMsg]);
+            setMessages((prev) => {
+              const updated = [...prev, notifMsg];
+              saveSessionMessages(currentSessionId, updated);
+              return updated;
+            });
+            fetchSessions();
           }
           prevRunnerRunningRef.current = Boolean(status.isRunning);
         }
@@ -166,7 +228,111 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
 
     const interval = setInterval(checkAutomationStatus, 2000);
     return () => clearInterval(interval);
-  }, []);
+  }, [currentSessionId]);
+
+  // Helper to persist conversation messages to the active session
+  const saveSessionMessages = async (sessionId: string, currentMessages: Message[], title?: string) => {
+    try {
+      await fetch("/api/automation/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save_messages",
+          id: sessionId,
+          title,
+          messages: currentMessages,
+        }),
+      });
+    } catch (e) {
+      console.warn("Failed to persist session messages:", e);
+    }
+  };
+
+  // Start a fresh, clean chat session and reset right-hand monitor
+  const handleNewChat = async () => {
+    const newSessionId = `session_${Date.now()}`;
+    setCurrentSessionId(newSessionId);
+    setMessages([]);
+    setInput("");
+    setAttachments([]);
+
+    try {
+      await fetch("/api/automation/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "reset",
+          id: newSessionId,
+          title: "New Chat Session",
+        }),
+      });
+
+      // Dispatch event to immediately notify AutomationMonitorPanel to clear logs and reset KPIs
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("automation-session-updated"));
+      }
+      fetchSessions();
+    } catch (e) {
+      console.error("Failed to reset session:", e);
+    }
+  };
+
+  // Switch to an archived past session
+  const handleSelectSession = async (session: AutomationSessionItem) => {
+    try {
+      const res = await fetch("/api/automation/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "load",
+          id: session.id,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setCurrentSessionId(session.id);
+
+        if (data.session?.parsedMessages && data.session.parsedMessages.length > 0) {
+          setMessages(data.session.parsedMessages);
+        } else {
+          // Generate a comprehensive recap card for past runs without stored chat messages
+          const recapMsg: Message = {
+            id: `archived-${session.id}`,
+            role: "assistant",
+            content: `📁 **Archived Automation Session Loaded**\n\n- **Session:** ${session.title}\n- **Status:** \`${session.status.toUpperCase()}\`\n- **Processed Tasks:** ${session.totalConfirmed + session.totalFailed} / ${session.totalTarget || session.totalConfirmed || 1}\n- **Confirmed Success:** ${session.totalConfirmed}\n- **Errors / Skipped:** ${session.totalFailed}\n- **Timestamp:** ${new Date(session.createdAt).toLocaleString()}\n\n*Historical execution logs, receipts, and screencasts for this session are now restored in the Live Automation Monitor on the right.*`,
+            timestamp: new Date(session.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          };
+          setMessages([recapMsg]);
+        }
+
+        // Notify AutomationMonitorPanel to render the loaded session
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("automation-session-updated"));
+        }
+      }
+    } catch (e) {
+      console.error("Failed to load session:", e);
+    }
+  };
+
+  // Delete an old session
+  const handleDeleteSession = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch(`/api/automation/sessions?id=${sessionId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        if (currentSessionId === sessionId) {
+          handleNewChat();
+        }
+      }
+    } catch (e) {
+      console.error("Failed to delete session:", e);
+    }
+  };
 
   const handleSend = async (textToSend?: string) => {
     const text = (textToSend || input).trim();
@@ -180,19 +346,23 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
       attachments: [...attachments],
     };
 
-    setMessages((prev) => [...prev, userMessage]);
+    const newMessages = [...messages, userMessage];
+    setMessages(newMessages);
     setInput("");
     setAttachments([]);
     setIsStreaming(true);
 
+    // Update title for new sessions based on first message
+    const sessionTitle = messages.length === 0 ? text.slice(0, 36) : undefined;
+    saveSessionMessages(currentSessionId, newMessages, sessionTitle);
+
     try {
-      // Stream or call backend chat API (Hono :4000)
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           isVisualMode,
-          messages: [...messages, userMessage].map((m) => ({
+          messages: newMessages.map((m) => ({
             role: m.role,
             content: m.content,
           })),
@@ -218,7 +388,10 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
         showActionButton: !data.triggered && isRegistrationIntent,
       };
 
-      setMessages((prev) => [...prev, assistantMessage]);
+      const finalMessages = [...newMessages, assistantMessage];
+      setMessages(finalMessages);
+      saveSessionMessages(currentSessionId, finalMessages, sessionTitle);
+      fetchSessions();
     } catch (err: any) {
       const errorMessage: Message = {
         id: `err-${Date.now()}`,
@@ -253,7 +426,6 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
 
     setAttachments((prev) => [...prev, newAtt]);
 
-    // Also automatically ingest to backend if spreadsheet or doc
     setIsUploading(true);
     setUploadFeedback(`Uploading & parsing ${file.name}...`);
     try {
@@ -288,272 +460,436 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  // Categorize sessions into Today, Yesterday, and Older
+  const groupedSessions = useMemo(() => {
+    const today: AutomationSessionItem[] = [];
+    const yesterday: AutomationSessionItem[] = [];
+    const older: AutomationSessionItem[] = [];
+
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const startOfYesterday = startOfToday - 86400000;
+
+    sessions.forEach((s) => {
+      const itemTime = new Date(s.createdAt).getTime();
+      if (itemTime >= startOfToday) {
+        today.push(s);
+      } else if (itemTime >= startOfYesterday) {
+        yesterday.push(s);
+      } else {
+        older.push(s);
+      }
+    });
+
+    return { today, yesterday, older };
+  }, [sessions]);
+
   return (
     <div className="flex-1 flex h-[calc(100vh-4rem)] w-full min-w-0 overflow-hidden relative">
-      {/* Center Chat Workspace */}
-      <div className="flex-1 flex flex-col h-full min-w-0 px-4 md:px-6 max-w-4xl mx-auto w-full relative overflow-hidden">
-        {/* Messages Scroll Area or Welcome Hero */}
-        <div className="flex-1 overflow-y-auto py-6 space-y-6 scroll-smooth sleek-scrollbar pr-1">
-        {messages.length === 0 ? (
-          /* Welcome Hero (ChatGPT style) */
-          <div className="h-full flex flex-col items-center justify-center text-center max-w-xl mx-auto px-4 py-8 space-y-6">
-            <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-xs">
-              <Sparkles className="w-7 h-7" />
-            </div>
-
-            <div className="space-y-2">
-              <h2 className="text-xl md:text-2xl font-bold tracking-tight text-foreground">
-                How can Dopamint assist your event operations?
-              </h2>
-              <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
-                Ask about real-time registration status, trigger autonomous batches,
-                or upload spreadsheets to sync team credentials.
-              </p>
-            </div>
-
-            {/* Quick Suggestion Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full pt-4 text-left">
-              {PROMPT_SUGGESTIONS.map((item, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleSend(item.prompt)}
-                  className="p-3.5 rounded-2xl bg-card border border-border hover:border-primary/40 hover:bg-muted/50 transition-all text-xs group flex flex-col justify-between cursor-pointer shadow-2xs"
-                >
-                  <div className="font-semibold text-foreground group-hover:text-primary transition-colors flex items-center justify-between w-full">
-                    <span>{item.title}</span>
-                    <CornerDownLeft className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-primary" />
-                  </div>
-                  <p className="text-muted-foreground mt-1 text-[11px] leading-normal line-clamp-2">
-                    {item.desc}
-                  </p>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          /* Message List */
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex gap-3 text-sm leading-relaxed ${
-                msg.role === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
-              {msg.role === "assistant" && (
-                <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 text-primary mt-0.5">
-                  <Bot className="w-4 h-4" />
-                </div>
-              )}
-
-              <div
-                className={`flex flex-col max-w-[85%] ${
-                  msg.role === "user" ? "items-end" : "items-start"
-                }`}
+      {/* 1. ChatGPT-Style Collapsible Left History Sidebar */}
+      <div
+        className={`h-full border-r border-border bg-card/70 backdrop-blur-md flex flex-col transition-all duration-300 ease-in-out shrink-0 select-none z-20 ${
+          isHistoryOpen ? "w-64" : "w-12"
+        }`}
+      >
+        {/* Top Action Bar */}
+        <div className="p-3 border-b border-border/80 flex items-center justify-between gap-2">
+          {isHistoryOpen ? (
+            <>
+              <button
+                onClick={handleNewChat}
+                className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-primary text-primary-foreground font-semibold text-xs hover:bg-primary/90 transition-all shadow-xs active:scale-95 cursor-pointer"
+                title="Start a brand new chat & reset automation monitor"
               >
-                {/* Attachments preview */}
-                {msg.attachments && msg.attachments.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mb-2">
-                    {msg.attachments.map((att) => (
-                      <div
-                        key={att.id}
-                        className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-card border border-border text-xs text-foreground font-medium"
-                      >
-                        <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
-                        <span className="truncate max-w-[160px]">{att.name}</span>
-                      </div>
+                <Plus className="w-4 h-4" />
+                <span>New Chat & Automation</span>
+              </button>
+              <button
+                onClick={() => setIsHistoryOpen(false)}
+                className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                title="Collapse Session History"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+            </>
+          ) : (
+            <div className="w-full flex flex-col items-center gap-3">
+              <button
+                onClick={() => setIsHistoryOpen(true)}
+                className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+                title="Expand Session History"
+              >
+                <History className="w-4 h-4 text-primary" />
+              </button>
+              <button
+                onClick={handleNewChat}
+                className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-all shadow-xs cursor-pointer"
+                title="Start a brand new chat & reset automation monitor"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Sessions Scroll List */}
+        {isHistoryOpen && (
+          <div className="flex-1 overflow-y-auto p-2 space-y-4 sleek-scrollbar">
+            {isLoadingSessions && sessions.length === 0 ? (
+              <div className="flex items-center justify-center py-8 text-xs text-muted-foreground gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Loading sessions...</span>
+              </div>
+            ) : sessions.length === 0 ? (
+              <div className="py-8 px-3 text-center space-y-2">
+                <Clock className="w-6 h-6 mx-auto text-muted-foreground/50" />
+                <p className="text-xs text-muted-foreground font-medium">No past automation runs yet.</p>
+                <p className="text-[11px] text-muted-foreground/70">
+                  Execute any prompt or form fill to populate persistent session logs.
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Today's Sessions */}
+                {groupedSessions.today.length > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 px-2 py-1 block">
+                      Today
+                    </span>
+                    {groupedSessions.today.map((s) => (
+                      <SessionRow
+                        key={s.id}
+                        session={s}
+                        isActive={s.id === currentSessionId}
+                        onSelect={() => handleSelectSession(s)}
+                        onDelete={(e) => handleDeleteSession(s.id, e)}
+                      />
                     ))}
                   </div>
                 )}
 
-                <div
-                  className={`p-4 rounded-2xl relative group ${
-                    msg.role === "user"
-                      ? "bg-primary text-primary-foreground font-medium rounded-tr-sm"
-                      : "bg-card border border-border text-foreground rounded-tl-sm shadow-2xs"
-                  }`}
-                >
-                  <div className="whitespace-pre-wrap">{msg.content}</div>
+                {/* Yesterday's Sessions */}
+                {groupedSessions.yesterday.length > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 px-2 py-1 block">
+                      Yesterday
+                    </span>
+                    {groupedSessions.yesterday.map((s) => (
+                      <SessionRow
+                        key={s.id}
+                        session={s}
+                        isActive={s.id === currentSessionId}
+                        onSelect={() => handleSelectSession(s)}
+                        onDelete={(e) => handleDeleteSession(s.id, e)}
+                      />
+                    ))}
+                  </div>
+                )}
 
-                  {msg.showActionButton && onTriggerAutomation && (
-                    <div className="mt-3.5 p-3.5 rounded-2xl bg-muted/70 border border-border/80 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-                      <div className="space-y-0.5">
-                        <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                          <Sparkles className="w-3.5 h-3.5 text-primary" />
-                          <span>Batch Automation Trigger Ready</span>
-                        </div>
-                        <p className="text-[11px] text-muted-foreground">
-                          Target: <strong className="text-foreground">{selectedAttendeeName || "Team"}</strong> • Mode:{" "}
-                          <span className={isVisualMode ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-foreground"}>
-                            {isVisualMode ? "👁️ Watch Live (Browser Window Pops Up)" : "Headless (Silent Background)"}
-                          </span>
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {onToggleVisualMode && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={onToggleVisualMode}
-                            className="rounded-xl text-xs gap-1.5 h-8 bg-card border-border"
-                            title="Toggle visual mode"
-                          >
-                            {isVisualMode ? (
-                              <Eye className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
-                            ) : (
-                              <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
-                            )}
-                            <span>{isVisualMode ? "Watch Live: ON" : "Watch Live: OFF"}</span>
-                          </Button>
-                        )}
-                        <Button
-                          size="sm"
-                          onClick={() => onTriggerAutomation()}
-                          className="rounded-xl text-xs gap-1.5 font-semibold h-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs cursor-pointer"
-                        >
-                          <Play className="w-3.5 h-3.5" />
-                          <span>Launch Batch {isVisualMode ? "Live 👁️" : "Now"}</span>
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {msg.role === "assistant" && (
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => copyToClipboard(msg.content, msg.id)}
-                        className="p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                        title="Copy to clipboard"
-                      >
-                        {copiedId === msg.id ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-500" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <span className="text-[10px] text-muted-foreground mt-1 px-1">
-                  {msg.timestamp}
-                </span>
-              </div>
-
-              {msg.role === "user" && (
-                <div className="w-8 h-8 rounded-xl bg-muted border border-border flex items-center justify-center flex-shrink-0 text-muted-foreground mt-0.5">
-                  <User className="w-4 h-4" />
-                </div>
-              )}
-            </div>
-          ))
-        )}
-
-        {/* Streaming / Thinking indicator */}
-        {isStreaming && (
-          <div className="flex gap-3 text-sm items-center">
-            <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 text-primary">
-              <Bot className="w-4 h-4" />
-            </div>
-            <div className="px-4 py-3 rounded-2xl bg-card border border-border rounded-tl-sm flex items-center gap-2 text-xs text-muted-foreground">
-              <Sparkles className="w-3.5 h-3.5 text-primary animate-pulse" />
-              <span>Agent is thinking...</span>
-            </div>
+                {/* Older Sessions */}
+                {groupedSessions.older.length > 0 && (
+                  <div className="space-y-1">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 px-2 py-1 block">
+                      Previous Runs
+                    </span>
+                    {groupedSessions.older.map((s) => (
+                      <SessionRow
+                        key={s.id}
+                        session={s}
+                        isActive={s.id === currentSessionId}
+                        onSelect={() => handleSelectSession(s)}
+                        onDelete={(e) => handleDeleteSession(s.id, e)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
 
-        <div ref={messagesEndRef} />
+        {/* History Footer info */}
+        {isHistoryOpen && (
+          <div className="p-3 border-t border-border/80 text-[11px] text-muted-foreground flex items-center justify-between">
+            <span className="flex items-center gap-1.5 font-medium">
+              <History className="w-3.5 h-3.5 text-primary" />
+              <span>{sessions.length} Saved Runs</span>
+            </span>
+            <button
+              onClick={fetchSessions}
+              className="hover:text-foreground p-1 rounded-md transition-colors"
+              title="Refresh sessions list"
+            >
+              <RefreshCw className="w-3 h-3" />
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Upload Banner feedback */}
-      {uploadFeedback && (
-        <div className="p-2.5 mb-2 rounded-xl bg-muted border border-border text-xs text-foreground flex items-center justify-between">
-          <span>{uploadFeedback}</span>
-          <button
-            onClick={() => setUploadFeedback(null)}
-            className="p-1 text-muted-foreground hover:text-foreground"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
+      {/* 2. Center Chat Workspace Canvas */}
+      <div className="flex-1 flex flex-col h-full min-w-0 px-4 md:px-6 max-w-4xl mx-auto w-full relative overflow-hidden">
+        {/* Messages Scroll Area or Welcome Hero */}
+        <div className="flex-1 overflow-y-auto py-6 space-y-6 scroll-smooth sleek-scrollbar pr-1">
+          {messages.length === 0 ? (
+            /* Welcome Hero (ChatGPT style) */
+            <div className="h-full flex flex-col items-center justify-center text-center max-w-xl mx-auto px-4 py-8 space-y-6">
+              <div className="w-14 h-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shadow-xs">
+                <Sparkles className="w-7 h-7" />
+              </div>
 
-      {/* Floating Bottom Input Area (ChatGPT Style) */}
-      <div className="pb-6 pt-2">
-        <div className="relative bg-card rounded-[22px] border border-border focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/10 transition-all shadow-sm">
-          {/* Selected Attachments Bar */}
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2 px-4 pt-3 border-b border-border/50 pb-2">
-              {attachments.map((att) => (
-                <div
-                  key={att.id}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-muted border border-border text-xs text-foreground"
-                >
-                  <Paperclip className="w-3 h-3 text-primary" />
-                  <span className="truncate max-w-[140px] font-medium">
-                    {att.name}
-                  </span>
+              <div className="space-y-2">
+                <h2 className="text-xl md:text-2xl font-bold tracking-tight text-foreground">
+                  How can Dopamint assist your automation operations?
+                </h2>
+                <p className="text-xs md:text-sm text-muted-foreground leading-relaxed">
+                  Ask about real-time registration status, trigger autonomous batches,
+                  or upload spreadsheets to sync team credentials.
+                </p>
+              </div>
+
+              {/* Quick Suggestion Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full pt-4 text-left">
+                {promptSuggestions.map((item, idx) => (
                   <button
-                    onClick={() =>
-                      setAttachments((prev) => prev.filter((a) => a.id !== att.id))
-                    }
-                    className="p-0.5 hover:text-destructive rounded-full"
+                    key={idx}
+                    onClick={() => handleSend(item.prompt)}
+                    className="p-3.5 rounded-2xl bg-card border border-border hover:border-primary/40 hover:bg-muted/50 transition-all text-xs group flex flex-col justify-between cursor-pointer shadow-2xs"
                   >
-                    <X className="w-3 h-3" />
+                    <div className="font-semibold text-foreground group-hover:text-primary transition-colors flex items-center justify-between w-full">
+                      <span>{item.title}</span>
+                      <CornerDownLeft className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity text-primary" />
+                    </div>
+                    <p className="text-muted-foreground mt-1 text-[11px] leading-normal line-clamp-2">
+                      {item.desc}
+                    </p>
                   </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            /* Message List */
+            messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex gap-3 text-sm leading-relaxed ${
+                  msg.role === "user" ? "justify-end" : "justify-start"
+                }`}
+              >
+                {msg.role === "assistant" && (
+                  <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 text-primary mt-0.5">
+                    <Bot className="w-4 h-4" />
+                  </div>
+                )}
+
+                <div
+                  className={`flex flex-col max-w-[85%] ${
+                    msg.role === "user" ? "items-end" : "items-start"
+                  }`}
+                >
+                  {/* Attachments preview */}
+                  {msg.attachments && msg.attachments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {msg.attachments.map((att) => (
+                        <div
+                          key={att.id}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-card border border-border text-xs text-foreground font-medium"
+                        >
+                          <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
+                          <span className="truncate max-w-[160px]">{att.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div
+                    className={`p-4 rounded-2xl relative group ${
+                      msg.role === "user"
+                        ? "bg-primary text-primary-foreground font-medium rounded-tr-sm"
+                        : "bg-card border border-border text-foreground rounded-tl-sm shadow-2xs"
+                    }`}
+                  >
+                    <div className="whitespace-pre-wrap">{msg.content}</div>
+
+                    {msg.showActionButton && onTriggerAutomation && (
+                      <div className="mt-3.5 p-3.5 rounded-2xl bg-muted/70 border border-border/80 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                        <div className="space-y-0.5">
+                          <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                            <Sparkles className="w-3.5 h-3.5 text-primary" />
+                            <span>Batch Automation Trigger Ready</span>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground">
+                            Target: <strong className="text-foreground">{selectedAttendeeName || "Team"}</strong> • Mode:{" "}
+                            <span className={isVisualMode ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-foreground"}>
+                              {isVisualMode ? "👁️ Watch Live (Browser Window Pops Up)" : "Headless (Silent Background)"}
+                            </span>
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {onToggleVisualMode && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={onToggleVisualMode}
+                              className="rounded-xl text-xs gap-1.5 h-8 bg-card border-border cursor-pointer"
+                              title="Toggle visual mode"
+                            >
+                              {isVisualMode ? (
+                                <Eye className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                              ) : (
+                                <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
+                              )}
+                              <span>{isVisualMode ? "Watch Live: ON" : "Watch Live: OFF"}</span>
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            onClick={() => onTriggerAutomation()}
+                            className="rounded-xl text-xs gap-1.5 font-semibold h-8 bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs cursor-pointer"
+                          >
+                            <Play className="w-3.5 h-3.5" />
+                            <span>Launch Batch {isVisualMode ? "Live 👁️" : "Now"}</span>
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {msg.role === "assistant" && (
+                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => copyToClipboard(msg.content, msg.id)}
+                          className="p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                          title="Copy to clipboard"
+                        >
+                          {copiedId === msg.id ? (
+                            <Check className="w-3.5 h-3.5 text-emerald-500" />
+                          ) : (
+                            <Copy className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <span className="text-[10px] text-muted-foreground mt-1 px-1">
+                    {msg.timestamp}
+                  </span>
                 </div>
-              ))}
+
+                {msg.role === "user" && (
+                  <div className="w-8 h-8 rounded-xl bg-muted border border-border flex items-center justify-center flex-shrink-0 text-muted-foreground mt-0.5">
+                    <User className="w-4 h-4" />
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+
+          {/* Streaming / Thinking indicator */}
+          {isStreaming && (
+            <div className="flex gap-3 text-sm items-center">
+              <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center flex-shrink-0 text-primary">
+                <Bot className="w-4 h-4" />
+              </div>
+              <div className="px-4 py-3 rounded-2xl bg-card border border-border rounded-tl-sm flex items-center gap-2 text-xs text-muted-foreground">
+                <Sparkles className="w-3.5 h-3.5 text-primary animate-pulse" />
+                <span>Agent is thinking...</span>
+              </div>
             </div>
           )}
 
-          {/* Textarea & Controls */}
-          <div className="flex items-end px-3 py-2 gap-2">
-            <input
-              type="file"
-              ref={fileInputRef}
-              onChange={(e) => handleFileUpload(e.target.files)}
-              className="hidden"
-              accept=".csv,.xlsx,.docx,.md,.txt"
-            />
-
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isUploading}
-              className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex-shrink-0 mb-0.5"
-              title="Attach document (.csv, .xlsx, .docx, .md)"
-            >
-              <Paperclip className="w-4 h-4" />
-            </button>
-
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask anything or enter instructions for Dopamint..."
-              className="flex-1 bg-transparent resize-none border-0 outline-none text-sm text-foreground placeholder:text-muted-foreground/70 py-2 min-h-[40px] max-h-[160px] leading-relaxed"
-            />
-
-            <button
-              type="button"
-              onClick={() => handleSend()}
-              disabled={(!input.trim() && attachments.length === 0) || isStreaming}
-              className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center flex-shrink-0 mb-1 hover:bg-primary/90 disabled:opacity-30 disabled:hover:bg-primary transition-all shadow-2xs cursor-pointer active:scale-95"
-              title="Send prompt"
-            >
-              <ArrowUp className="w-4 h-4" />
-            </button>
-          </div>
+          <div ref={messagesEndRef} />
         </div>
 
-        <p className="text-center text-[10px] text-muted-foreground/70 mt-2">
-          Autonomous Form Agent is grounded in real-time attendee profiles, target events, and live browser automation.
-        </p>
-      </div>
+        {/* Upload Banner feedback */}
+        {uploadFeedback && (
+          <div className="p-2.5 mb-2 rounded-xl bg-muted border border-border text-xs text-foreground flex items-center justify-between">
+            <span>{uploadFeedback}</span>
+            <button
+              onClick={() => setUploadFeedback(null)}
+              className="p-1 text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
+        {/* Floating Bottom Input Area (ChatGPT Style) */}
+        <div className="pb-6 pt-2">
+          <div className="relative bg-card rounded-[22px] border border-border focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/10 transition-all shadow-sm">
+            {/* Selected Attachments Bar */}
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-2 px-4 pt-3 border-b border-border/50 pb-2">
+                {attachments.map((att) => (
+                  <div
+                    key={att.id}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-muted border border-border text-xs text-foreground"
+                  >
+                    <Paperclip className="w-3 h-3 text-primary" />
+                    <span className="truncate max-w-[140px] font-medium">
+                      {att.name}
+                    </span>
+                    <button
+                      onClick={() =>
+                        setAttachments((prev) => prev.filter((a) => a.id !== att.id))
+                      }
+                      className="p-0.5 hover:text-destructive rounded-full cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Textarea & Controls */}
+            <div className="flex items-end px-3 py-2 gap-2">
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={(e) => handleFileUpload(e.target.files)}
+                className="hidden"
+                accept=".csv,.xlsx,.docx,.md,.txt"
+              />
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploading}
+                className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors flex-shrink-0 mb-0.5 cursor-pointer"
+                title="Attach document (.csv, .xlsx, .docx, .md)"
+              >
+                <Paperclip className="w-4 h-4" />
+              </button>
+
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask anything or enter instructions for Dopamint..."
+                className="flex-1 bg-transparent resize-none border-0 outline-none text-sm text-foreground placeholder:text-muted-foreground/70 py-2 min-h-[40px] max-h-[160px] leading-relaxed"
+              />
+
+              <button
+                type="button"
+                onClick={() => handleSend()}
+                disabled={(!input.trim() && attachments.length === 0) || isStreaming}
+                className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center flex-shrink-0 mb-1 hover:bg-primary/90 disabled:opacity-30 disabled:hover:bg-primary transition-all shadow-2xs cursor-pointer active:scale-95"
+                title="Send prompt"
+              >
+                <ArrowUp className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          <p className="text-center text-[10px] text-muted-foreground/70 mt-2">
+            Autonomous Form Agent is grounded in real-time attendee profiles, target events, and live browser automation.
+          </p>
+        </div>
       </div>
 
-      {/* Right-Side End Menu Bar: Live Automation Monitor */}
+      {/* 3. Right-Side End Menu Bar: Live Automation Monitor */}
       <AutomationMonitorPanel
         onStartAutomation={() => onTriggerAutomation?.()}
         onPauseAutomation={onPauseAutomation}
@@ -565,3 +901,60 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
     </div>
   );
 };
+
+// Row item for past sessions
+function SessionRow({
+  session,
+  isActive,
+  onSelect,
+  onDelete,
+}: {
+  session: AutomationSessionItem;
+  isActive: boolean;
+  onSelect: () => void;
+  onDelete: (e: React.MouseEvent) => void;
+}) {
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "completed":
+        return <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" title="Completed" />;
+      case "running":
+        return <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse inline-block" title="Running" />;
+      case "failed":
+        return <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" title="Failed" />;
+      default:
+        return <span className="w-2 h-2 rounded-full bg-muted-foreground/40 inline-block" title="Standby / Idle" />;
+    }
+  };
+
+  return (
+    <div
+      onClick={onSelect}
+      className={`group relative flex items-center justify-between p-2 rounded-xl text-xs cursor-pointer transition-all ${
+        isActive
+          ? "bg-accent/80 text-foreground font-semibold border border-border shadow-2xs"
+          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+      }`}
+    >
+      <div className="flex items-center gap-2 min-w-0 flex-1 pr-1">
+        {getStatusBadge(session.status)}
+        <span className="truncate text-xs">{session.title}</span>
+      </div>
+
+      <div className="flex items-center gap-1.5 opacity-80 group-hover:opacity-100">
+        {session.totalConfirmed > 0 && (
+          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+            ✓{session.totalConfirmed}
+          </span>
+        )}
+        <button
+          onClick={onDelete}
+          className="opacity-0 group-hover:opacity-100 p-1 hover:text-destructive rounded-md transition-all cursor-pointer"
+          title="Delete session"
+        >
+          <Trash2 className="w-3 h-3" />
+        </button>
+      </div>
+    </div>
+  );
+}

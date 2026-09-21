@@ -80,14 +80,19 @@ model ChatMessage {
 
 model AutomationJob {
   id                  String   @id @default(uuid())
-  status              String   @default("idle") // idle, running, paused, completed, stopped
+  title               String?
+  status              String   @default("idle") // idle, running, paused, completed, stopped, failed
+  targetUrl           String?
   activeEventId       Int?
   activeAttendeeEmail String?
   totalTarget         Int      @default(0)
   totalConfirmed      Int      @default(0)
   totalFailed         Int      @default(0)
-  paceConfig          String   // JSON string of delay configurations
-  logs                String?  // Recent execution logs
+  paceConfig          String?  // JSON string of delay configurations
+  logs                String?  // Recent execution logs JSON
+  confirmations       String?  // JSON string of confirmations
+  messages            String?  // JSON string of conversation messages
+  latestFrame         String?  // Base64 screenshot
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }
