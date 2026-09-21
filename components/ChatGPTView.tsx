@@ -488,146 +488,152 @@ export const ChatGPTView: React.FC<ChatGPTViewProps> = ({
     <div className="flex-1 flex h-[calc(100vh-4rem)] w-full min-w-0 overflow-hidden relative">
       {/* 1. ChatGPT-Style Collapsible Left History Sidebar */}
       <div
-        className={`h-full border-r border-border bg-card/70 backdrop-blur-md flex flex-col transition-all duration-300 ease-in-out shrink-0 select-none z-20 ${
-          isHistoryOpen ? "w-64" : "w-12"
+        className={`h-full border-r border-border/70 bg-card/40 backdrop-blur-md flex flex-col transition-all duration-300 ease-in-out shrink-0 select-none z-20 ${
+          isHistoryOpen ? "w-64" : "w-0 overflow-hidden border-r-0"
         }`}
       >
-        {/* Top Action Bar */}
-        <div className="p-3 border-b border-border/80 flex items-center justify-between gap-2">
-          {isHistoryOpen ? (
-            <>
-              <button
-                onClick={handleNewChat}
-                className="flex-1 flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-primary text-primary-foreground font-semibold text-xs hover:bg-primary/90 transition-all shadow-xs active:scale-95 cursor-pointer"
-                title="Start a brand new chat & reset automation monitor"
-              >
-                <Plus className="w-4 h-4" />
-                <span>New Chat & Automation</span>
-              </button>
-              <button
-                onClick={() => setIsHistoryOpen(false)}
-                className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
-                title="Collapse Session History"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-            </>
-          ) : (
-            <div className="w-full flex flex-col items-center gap-3">
-              <button
-                onClick={() => setIsHistoryOpen(true)}
-                className="p-2 rounded-xl text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
-                title="Expand Session History"
-              >
-                <History className="w-4 h-4 text-primary" />
-              </button>
-              <button
-                onClick={handleNewChat}
-                className="w-8 h-8 rounded-xl bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/90 transition-all shadow-xs cursor-pointer"
-                title="Start a brand new chat & reset automation monitor"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
+        {/* Top Header & New Chat Action */}
+        <div className="p-3 border-b border-border/60 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <History className="w-4 h-4 text-primary" />
+              <span className="text-xs font-bold text-foreground">History</span>
+              {sessions.length > 0 && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-muted font-semibold text-muted-foreground">
+                  {sessions.length}
+                </span>
+              )}
             </div>
-          )}
+            <button
+              onClick={() => setIsHistoryOpen(false)}
+              className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
+              title="Close history"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          </div>
+
+          <button
+            onClick={handleNewChat}
+            className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl border border-border/80 bg-background/80 hover:bg-accent/80 hover:border-primary/40 text-foreground font-semibold text-xs transition-all shadow-2xs active:scale-[0.98] cursor-pointer"
+            title="Start a new chat & reset live monitor"
+          >
+            <Plus className="w-3.5 h-3.5 text-primary" />
+            <span>New Chat</span>
+          </button>
         </div>
 
         {/* Sessions Scroll List */}
-        {isHistoryOpen && (
-          <div className="flex-1 overflow-y-auto p-2 space-y-4 sleek-scrollbar">
-            {isLoadingSessions && sessions.length === 0 ? (
-              <div className="flex items-center justify-center py-8 text-xs text-muted-foreground gap-2">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Loading sessions...</span>
+        <div className="flex-1 overflow-y-auto p-2 space-y-3 sleek-scrollbar">
+          {isLoadingSessions && sessions.length === 0 ? (
+            <div className="flex items-center justify-center py-8 text-xs text-muted-foreground gap-2">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-primary" />
+              <span>Loading sessions...</span>
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="py-8 px-3 text-center space-y-2">
+              <div className="w-8 h-8 rounded-xl bg-muted/60 flex items-center justify-center mx-auto text-muted-foreground">
+                <History className="w-4 h-4" />
               </div>
-            ) : sessions.length === 0 ? (
-              <div className="py-8 px-3 text-center space-y-2">
-                <Clock className="w-6 h-6 mx-auto text-muted-foreground/50" />
-                <p className="text-xs text-muted-foreground font-medium">No past automation runs yet.</p>
-                <p className="text-[11px] text-muted-foreground/70">
-                  Execute any prompt or form fill to populate persistent session logs.
-                </p>
-              </div>
-            ) : (
-              <>
-                {/* Today's Sessions */}
-                {groupedSessions.today.length > 0 && (
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 px-2 py-1 block">
-                      Today
-                    </span>
-                    {groupedSessions.today.map((s) => (
-                      <SessionRow
-                        key={s.id}
-                        session={s}
-                        isActive={s.id === currentSessionId}
-                        onSelect={() => handleSelectSession(s)}
-                        onDelete={(e) => handleDeleteSession(s.id, e)}
-                      />
-                    ))}
-                  </div>
-                )}
+              <p className="text-xs font-semibold text-foreground">No past sessions</p>
+              <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+                Your chats and automation runs will be saved here automatically.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Today's Sessions */}
+              {groupedSessions.today.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60 px-2 py-0.5 block">
+                    Today
+                  </span>
+                  {groupedSessions.today.map((s) => (
+                    <SessionRow
+                      key={s.id}
+                      session={s}
+                      isActive={s.id === currentSessionId}
+                      onSelect={() => handleSelectSession(s)}
+                      onDelete={(e) => handleDeleteSession(s.id, e)}
+                    />
+                  ))}
+                </div>
+              )}
 
-                {/* Yesterday's Sessions */}
-                {groupedSessions.yesterday.length > 0 && (
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 px-2 py-1 block">
-                      Yesterday
-                    </span>
-                    {groupedSessions.yesterday.map((s) => (
-                      <SessionRow
-                        key={s.id}
-                        session={s}
-                        isActive={s.id === currentSessionId}
-                        onSelect={() => handleSelectSession(s)}
-                        onDelete={(e) => handleDeleteSession(s.id, e)}
-                      />
-                    ))}
-                  </div>
-                )}
+              {/* Yesterday's Sessions */}
+              {groupedSessions.yesterday.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60 px-2 py-0.5 block">
+                    Yesterday
+                  </span>
+                  {groupedSessions.yesterday.map((s) => (
+                    <SessionRow
+                      key={s.id}
+                      session={s}
+                      isActive={s.id === currentSessionId}
+                      onSelect={() => handleSelectSession(s)}
+                      onDelete={(e) => handleDeleteSession(s.id, e)}
+                    />
+                  ))}
+                </div>
+              )}
 
-                {/* Older Sessions */}
-                {groupedSessions.older.length > 0 && (
-                  <div className="space-y-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70 px-2 py-1 block">
-                      Previous Runs
-                    </span>
-                    {groupedSessions.older.map((s) => (
-                      <SessionRow
-                        key={s.id}
-                        session={s}
-                        isActive={s.id === currentSessionId}
-                        onSelect={() => handleSelectSession(s)}
-                        onDelete={(e) => handleDeleteSession(s.id, e)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-        )}
+              {/* Older Sessions */}
+              {groupedSessions.older.length > 0 && (
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/60 px-2 py-0.5 block">
+                    Previous Runs
+                  </span>
+                  {groupedSessions.older.map((s) => (
+                    <SessionRow
+                      key={s.id}
+                      session={s}
+                      isActive={s.id === currentSessionId}
+                      onSelect={() => handleSelectSession(s)}
+                      onDelete={(e) => handleDeleteSession(s.id, e)}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
 
         {/* History Footer info */}
-        {isHistoryOpen && (
-          <div className="p-3 border-t border-border/80 text-[11px] text-muted-foreground flex items-center justify-between">
-            <span className="flex items-center gap-1.5 font-medium">
-              <History className="w-3.5 h-3.5 text-primary" />
-              <span>{sessions.length} Saved Runs</span>
-            </span>
-            <button
-              onClick={fetchSessions}
-              className="hover:text-foreground p-1 rounded-md transition-colors"
-              title="Refresh sessions list"
-            >
-              <RefreshCw className="w-3 h-3" />
-            </button>
-          </div>
-        )}
+        <div className="p-2.5 border-t border-border/60 text-[11px] text-muted-foreground flex items-center justify-between">
+          <span className="font-medium text-[11px]">
+            {sessions.length} Saved {sessions.length === 1 ? "Session" : "Sessions"}
+          </span>
+          <button
+            onClick={fetchSessions}
+            className="hover:text-foreground p-1 rounded-md transition-colors cursor-pointer"
+            title="Refresh sessions list"
+          >
+            <RefreshCw className="w-3 h-3" />
+          </button>
+        </div>
       </div>
 
       {/* 2. Center Chat Workspace Canvas */}
       <div className="flex-1 flex flex-col h-full min-w-0 px-4 md:px-6 max-w-4xl mx-auto w-full relative overflow-hidden">
+        {/* Floating Open History Button when History is Closed */}
+        {!isHistoryOpen && (
+          <div className="pt-2 pb-0 flex items-center">
+            <button
+              onClick={() => setIsHistoryOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-border/80 bg-card hover:bg-muted text-xs text-muted-foreground hover:text-foreground transition-all shadow-2xs cursor-pointer group"
+              title="Open Session History"
+            >
+              <History className="w-3.5 h-3.5 text-primary group-hover:scale-110 transition-transform" />
+              <span className="font-medium">History</span>
+              {sessions.length > 0 && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-primary/10 text-primary font-bold">
+                  {sessions.length}
+                </span>
+              )}
+            </button>
+          </div>
+        )}
         {/* Messages Scroll Area or Welcome Hero */}
         <div className="flex-1 overflow-y-auto py-6 space-y-6 scroll-smooth sleek-scrollbar pr-1">
           {messages.length === 0 ? (
@@ -917,31 +923,31 @@ function SessionRow({
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "completed":
-        return <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block" title="Completed" />;
+        return <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="Completed" />;
       case "running":
-        return <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse inline-block" title="Running" />;
+        return <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" title="Running" />;
       case "failed":
-        return <span className="w-2 h-2 rounded-full bg-rose-500 inline-block" title="Failed" />;
+        return <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" title="Failed" />;
       default:
-        return <span className="w-2 h-2 rounded-full bg-muted-foreground/40 inline-block" title="Standby / Idle" />;
+        return <span className="w-2 h-2 rounded-full bg-muted-foreground/40 shrink-0" title="Standby / Idle" />;
     }
   };
 
   return (
     <div
       onClick={onSelect}
-      className={`group relative flex items-center justify-between p-2 rounded-xl text-xs cursor-pointer transition-all ${
+      className={`group relative flex items-center justify-between py-2 px-2.5 rounded-xl text-xs cursor-pointer transition-all ${
         isActive
-          ? "bg-accent/80 text-foreground font-semibold border border-border shadow-2xs"
+          ? "bg-accent text-foreground font-semibold border border-border/80 shadow-2xs"
           : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
       }`}
     >
-      <div className="flex items-center gap-2 min-w-0 flex-1 pr-1">
+      <div className="flex items-center gap-2 min-w-0 flex-1 pr-1.5">
         {getStatusBadge(session.status)}
-        <span className="truncate text-xs">{session.title}</span>
+        <span className="truncate text-xs tracking-tight">{session.title}</span>
       </div>
 
-      <div className="flex items-center gap-1.5 opacity-80 group-hover:opacity-100">
+      <div className="flex items-center gap-1.5 shrink-0">
         {session.totalConfirmed > 0 && (
           <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
             ✓{session.totalConfirmed}
@@ -952,7 +958,7 @@ function SessionRow({
           className="opacity-0 group-hover:opacity-100 p-1 hover:text-destructive rounded-md transition-all cursor-pointer"
           title="Delete session"
         >
-          <Trash2 className="w-3 h-3" />
+          <Trash2 className="w-3.5 h-3.5" />
         </button>
       </div>
     </div>

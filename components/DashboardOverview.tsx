@@ -48,15 +48,9 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       {/* Hero Welcome Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-card border border-border p-6 rounded-3xl relative overflow-hidden shadow-2xs">
         <div className="space-y-1.5 z-10">
-          <div className="flex items-center gap-2">
             <Badge variant="olive" className="text-[11px]">
               Autonomous Agent Platform
             </Badge>
-            <span className="text-xs text-muted-foreground">•</span>
-            <span className="text-xs text-muted-foreground">
-              AaaS Operations
-            </span>
-          </div>
           <h2 className="text-2xl font-bold tracking-tight text-foreground">
             Form Automation & Event Operations
           </h2>
