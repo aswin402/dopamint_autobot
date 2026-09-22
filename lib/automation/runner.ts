@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import prisma from "../prisma";
 import { resolveFormField, FormFieldPrompt, EventContext } from "./field-resolver";
-import { saveAnswerToMemory } from "./persona";
+import { saveAnswerToMemory, normalizeQuestionKey } from "./persona";
 
 export interface PacingConfig {
   minInterEventDelay: number;
@@ -31,6 +31,21 @@ export interface RunnerLog {
   timestamp: string;
   level: "info" | "success" | "warn" | "error";
   message: string;
+}
+
+export interface PendingIntervention {
+  id: string; // unique intervention id (e.g. `hitl_${Date.now()}`)
+  sessionId: string;
+  eventId?: number;
+  eventTitle?: string;
+  attendeeId: string;
+  attendeeName: string;
+  attendeeEmail: string;
+  fieldLabel: string;
+  fieldType: "text" | "textarea" | "combobox" | "select" | "radio" | "checkbox";
+  options?: string[];
+  createdAt: number;
+  timeoutAt: number; // e.g. 300,000ms (5 mins)
 }
 
 export interface DetectedField {
@@ -410,8 +425,10 @@ export async function fillFormFields(
   person: any,
   pacing: PacingConfig = DEFAULT_PACING,
   eventContext?: EventContext,
-  logFn?: (msg: string, level?: RunnerLog["level"]) => void
+  logFn?: (msg: string, level?: RunnerLog["level"]) => void,
+  runner?: AutomationRunner
 ): Promise<void> {
+  const activeRunner = runner || automationRunner;
   const log = (msg: string, level: RunnerLog["level"] = "info") => {
     if (logFn) {
       logFn(msg, level);
@@ -457,11 +474,20 @@ export async function fillFormFields(
 
       const resolution = await resolveFormField(fieldPrompt, person, eventContext);
 
-      if (resolution.requiresHumanIntervention) {
-        log(
-          `[Runner HITL Alert] ⚠️ Combobox "${label}" requires human intervention! (Confidence: ${resolution.confidence}, Reason: ${resolution.reasoning})`,
-          "warn"
-        );
+      if (resolution.requiresHumanIntervention || (resolution.confidence < 0.70 && isRequired)) {
+        if (activeRunner) {
+          const resolved = await activeRunner.waitForInterventionResolution(
+            fieldPrompt,
+            trigger,
+            page,
+            person,
+            eventContext
+          );
+          if (resolved) {
+            await page.waitForTimeout(pacing.fieldDelayMs || 250);
+            continue;
+          }
+        }
       } else {
         log(`🎯 Resolved combobox [${label}]: "${resolution.value}" (confidence: ${resolution.confidence})`, "info");
       }
@@ -526,8 +552,20 @@ export async function fillFormFields(
 
       const resolution = await resolveFormField(fieldPrompt, person, eventContext);
 
-      if (resolution.requiresHumanIntervention) {
-        log(`[Runner HITL Alert] ⚠️ Radio group "${label}" requires human intervention!`, "warn");
+      if (resolution.requiresHumanIntervention || (resolution.confidence < 0.70 && isRequired)) {
+        if (activeRunner) {
+          const resolved = await activeRunner.waitForInterventionResolution(
+            fieldPrompt,
+            rg,
+            page,
+            person,
+            eventContext
+          );
+          if (resolved) {
+            await page.waitForTimeout(pacing.fieldDelayMs || 200);
+            continue;
+          }
+        }
       }
 
       if (resolution.value) {
@@ -593,19 +631,33 @@ export async function fillFormFields(
         if (choice && !options.includes(choice)) options.push(choice);
       }
 
+      const fieldPrompt: FormFieldPrompt = {
+        label: groupLabel,
+        type: "radio",
+        options,
+        isRequired: true,
+      };
+
       const resolution = await resolveFormField(
-        {
-          label: groupLabel,
-          type: "radio",
-          options,
-          isRequired: true,
-        },
+        fieldPrompt,
         person,
         eventContext
       );
 
-      if (resolution.requiresHumanIntervention) {
-        log(`[Runner HITL Alert] ⚠️ Radio group "${groupLabel}" requires human intervention!`, "warn");
+      if (resolution.requiresHumanIntervention || resolution.confidence < 0.70) {
+        if (activeRunner) {
+          const resolved = await activeRunner.waitForInterventionResolution(
+            fieldPrompt,
+            firstRadio,
+            page,
+            person,
+            eventContext
+          );
+          if (resolved) {
+            await page.waitForTimeout(pacing.fieldDelayMs || 200);
+            continue;
+          }
+        }
       }
 
       if (resolution.value) {
@@ -655,19 +707,33 @@ export async function fillFormFields(
       );
 
       if (options.length > 0) {
+        const fieldPrompt: FormFieldPrompt = {
+          label: label || "Select option",
+          type: "select",
+          options,
+          isRequired,
+        };
+
         const resolution = await resolveFormField(
-          {
-            label: label || "Select option",
-            type: "select",
-            options,
-            isRequired,
-          },
+          fieldPrompt,
           person,
           eventContext
         );
 
-        if (resolution.requiresHumanIntervention) {
-          log(`[Runner HITL Alert] ⚠️ Select "${label}" requires human intervention!`, "warn");
+        if (resolution.requiresHumanIntervention || (resolution.confidence < 0.70 && isRequired)) {
+          if (activeRunner) {
+            const resolved = await activeRunner.waitForInterventionResolution(
+              fieldPrompt,
+              sel,
+              page,
+              person,
+              eventContext
+            );
+            if (resolved) {
+              await page.waitForTimeout(pacing.fieldDelayMs || 150);
+              continue;
+            }
+          }
         }
 
         if (resolution.value) {
@@ -724,23 +790,34 @@ export async function fillFormFields(
       const tagName = await inp.evaluate((el: any) => el.tagName.toLowerCase());
       const fieldType: "text" | "textarea" = tagName === "textarea" ? "textarea" : "text";
 
+      const fieldPrompt: FormFieldPrompt = {
+        label: label || placeholder || nameAttr || "Text input",
+        placeholder,
+        nameAttr,
+        type: fieldType,
+        isRequired,
+      };
+
       const resolution = await resolveFormField(
-        {
-          label: label || placeholder || nameAttr || "Text input",
-          placeholder,
-          nameAttr,
-          type: fieldType,
-          isRequired,
-        },
+        fieldPrompt,
         person,
         eventContext
       );
 
-      if (resolution.requiresHumanIntervention) {
-        log(
-          `[Runner HITL Alert] ⚠️ Field "${label || placeholder || nameAttr}" requires human intervention! (Confidence: ${resolution.confidence})`,
-          "warn"
-        );
+      if (resolution.requiresHumanIntervention || (resolution.confidence < 0.70 && isRequired)) {
+        if (activeRunner) {
+          const resolved = await activeRunner.waitForInterventionResolution(
+            fieldPrompt,
+            inp,
+            page,
+            person,
+            eventContext
+          );
+          if (resolved) {
+            await page.waitForTimeout(pacing.fieldDelayMs || 250);
+            continue;
+          }
+        }
       } else {
         const masked = resolution.value.length > 3 ? resolution.value.slice(0, 3) + "***" : resolution.value;
         log(`✍️ Filled [${label || placeholder || nameAttr}]: "${masked}" (confidence: ${resolution.confidence})`, "info");
@@ -792,18 +869,32 @@ export async function fillFormFields(
       const label = await extractFieldLabel(page, cb);
       const isRequired = await isElementRequired(cb, label);
 
+      const fieldPrompt: FormFieldPrompt = {
+        label: label || "Agreement",
+        type: "checkbox",
+        isRequired,
+      };
+
       const resolution = await resolveFormField(
-        {
-          label: label || "Agreement",
-          type: "checkbox",
-          isRequired,
-        },
+        fieldPrompt,
         person,
         eventContext
       );
 
-      if (resolution.requiresHumanIntervention) {
-        log(`[Runner HITL Alert] ⚠️ Checkbox "${label}" requires human intervention!`, "warn");
+      if (resolution.requiresHumanIntervention || (resolution.confidence < 0.70 && isRequired)) {
+        if (activeRunner) {
+          const resolved = await activeRunner.waitForInterventionResolution(
+            fieldPrompt,
+            cb,
+            page,
+            person,
+            eventContext
+          );
+          if (resolved) {
+            await page.waitForTimeout(100);
+            continue;
+          }
+        }
       }
 
       const shouldCheck =
@@ -843,7 +934,7 @@ export async function fillFormFields(
   log(`✅ Form filling completed.`, "success");
 }
 
-class AutomationRunner {
+export class AutomationRunner {
   private isRunning: boolean = false;
   private isPaused: boolean = false;
   private isHeadless: boolean = true;
@@ -876,6 +967,8 @@ class AutomationRunner {
   private currentTitle: string | null = null;
   private isHumanInterventionNeeded: boolean = false;
   private humanInterventionReason: string | null = null;
+  private pendingIntervention: PendingIntervention | null = null;
+  private interventionResolver: ((res: { value: string; remember?: boolean } | null) => void) | null = null;
   private cdpSession: CDPSession | null = null;
   private currentSessionId: string = `session_${Date.now()}`;
   private sessionTitle: string = "New Automation Session";
@@ -901,6 +994,7 @@ class AutomationRunner {
       latestFrame: this.latestFrame,
       isHumanInterventionNeeded: this.isHumanInterventionNeeded,
       humanInterventionReason: this.humanInterventionReason,
+      pendingIntervention: this.pendingIntervention,
       progress: {
         completed: this.completedItems,
         total: this.totalItems,
@@ -1082,7 +1176,171 @@ class AutomationRunner {
   public stop() {
     this.isRunning = false;
     this.isPaused = false;
+    if (this.interventionResolver) {
+      this.interventionResolver(null);
+      this.interventionResolver = null;
+    }
+    this.pendingIntervention = null;
+    this.isHumanInterventionNeeded = false;
+    this.humanInterventionReason = null;
     this.log("⏹️ Runner stopped.", "warn");
+  }
+
+  public getPendingIntervention(): PendingIntervention | null {
+    return this.pendingIntervention;
+  }
+
+  public async resolveIntervention(
+    id?: string,
+    value: string = "",
+    remember: boolean = true
+  ): Promise<boolean> {
+    if (!this.pendingIntervention || !this.interventionResolver) {
+      this.log("⚠️ [HITL] resolveIntervention called but no pending intervention is waiting", "warn");
+      return false;
+    }
+
+    if (id && this.pendingIntervention.id !== id) {
+      this.log(`⚠️ [HITL] resolveIntervention id mismatch: expected ${this.pendingIntervention.id}, got ${id}`, "warn");
+      return false;
+    }
+
+    const resolver = this.interventionResolver;
+    this.interventionResolver = null;
+    resolver({ value, remember });
+    return true;
+  }
+
+  public async waitForInterventionResolution(
+    field: FormFieldPrompt,
+    triggerLocator: Locator,
+    page: Page,
+    person: any,
+    eventContext?: EventContext
+  ): Promise<boolean> {
+    this.log(`⚠️ [HITL] Human intervention required for field: "${field.label}"`, "warn");
+    this.isHumanInterventionNeeded = true;
+    this.humanInterventionReason = `Required field needs answer: ${field.label}`;
+    this.activePage = page;
+
+    const interventionId = `hitl_${Date.now()}`;
+    this.pendingIntervention = {
+      id: interventionId,
+      sessionId: this.currentSessionId,
+      eventId: this.currentEvent?.id,
+      eventTitle: eventContext?.title || this.currentEvent?.title,
+      attendeeId: person?.id || this.currentAttendee?.id || "unknown",
+      attendeeName: person?.name || this.currentAttendee?.name || "Unknown Attendee",
+      attendeeEmail: person?.email || this.currentAttendee?.email || "",
+      fieldLabel: field.label,
+      fieldType: field.type,
+      options: field.options,
+      createdAt: Date.now(),
+      timeoutAt: Date.now() + 300000, // 5 min timeout
+    };
+
+    // Await human intervention resolution via Promise
+    const timeoutDuration = 300000;
+    let timer: NodeJS.Timeout | null = null;
+    const resolutionPromise = new Promise<{ value: string; remember?: boolean } | null>((resolve) => {
+      this.interventionResolver = resolve;
+      timer = setTimeout(() => {
+        this.log(`⏱️ [HITL] Intervention timed out after 5 minutes for field "${field.label}"`, "warn");
+        resolve(null);
+      }, timeoutDuration);
+    });
+
+    // Capture frame so UI live screencast shows the exact field on screen
+    await this.captureFrame(page).catch(() => {});
+
+    const resolution = await resolutionPromise;
+    if (timer) clearTimeout(timer);
+    this.interventionResolver = null;
+
+    if (!resolution) {
+      this.pendingIntervention = null;
+      this.isHumanInterventionNeeded = false;
+      this.humanInterventionReason = null;
+      this.log(`⚠️ [HITL] Continuing automation after intervention timeout for "${field.label}"`, "warn");
+      return false;
+    }
+
+    const { value: answer, remember } = resolution;
+    this.log(`🎯 [HITL] Received human answer for "${field.label}": "${answer}"`, "info");
+
+    try {
+      if (field.type === "combobox") {
+        await interactWithDropdown(page, triggerLocator, answer);
+      } else if (field.type === "select") {
+        const options = await triggerLocator.evaluate((s: HTMLSelectElement) =>
+          Array.from(s.options).map((o) => (o.text || o.value || "").trim())
+        ).catch(() => []);
+        const targetLower = answer.trim().toLowerCase();
+        const matchIdx = options.findIndex(
+          (o: string) => o.toLowerCase() === targetLower || o.toLowerCase().includes(targetLower)
+        );
+        if (matchIdx >= 0) {
+          await triggerLocator.selectOption({ index: matchIdx }).catch(() => {});
+        } else {
+          await triggerLocator.selectOption({ label: answer }).catch(async () => {
+            await triggerLocator.selectOption({ value: answer }).catch(() => {});
+          });
+        }
+      } else if (field.type === "radio") {
+        const radios = await page.locator(`input[type="radio"], [role="radio"]`).all();
+        let clicked = false;
+        const targetLower = answer.trim().toLowerCase();
+        for (const r of radios) {
+          const lbl = (await extractFieldLabel(page, r)).trim().toLowerCase();
+          const val = ((await r.getAttribute("value").catch(() => "")) || "").trim().toLowerCase();
+          if (lbl === targetLower || val === targetLower || lbl.includes(targetLower)) {
+            await r.scrollIntoViewIfNeeded().catch(() => {});
+            await r.click().catch(() => {});
+            clicked = true;
+            break;
+          }
+        }
+        if (!clicked) {
+          await interactWithDropdown(page, triggerLocator, answer).catch(() => {});
+        }
+      } else if (field.type === "checkbox") {
+        const shouldCheck = answer === "true" || answer === "yes" || answer === "1" || Boolean(answer);
+        if (shouldCheck) {
+          const isChecked = await triggerLocator.evaluate(
+            (el: any) => el.checked === true || el.getAttribute("aria-checked") === "true"
+          ).catch(() => false);
+          if (!isChecked) {
+            await triggerLocator.click().catch(() => {});
+          }
+        }
+      } else {
+        // text or textarea
+        await triggerLocator.scrollIntoViewIfNeeded().catch(() => {});
+        await triggerLocator.focus().catch(() => {});
+        await triggerLocator.fill(answer);
+        await triggerLocator.dispatchEvent("input").catch(() => {});
+        await triggerLocator.dispatchEvent("change").catch(() => {});
+      }
+
+      if (remember !== false && person?.id && field.label) {
+        try {
+          await saveAnswerToMemory(person.id, field.label, answer);
+          this.log(`💾 [HITL] Remembered answer for "${field.label}": "${answer}"`, "info");
+        } catch (memErr: any) {
+          this.log(`⚠️ [HITL] Failed to persist answer to memory: ${memErr.message}`, "warn");
+        }
+      }
+    } catch (applyErr: any) {
+      this.log(`⚠️ [HITL] Error applying resolved value to field: ${applyErr.message}`, "warn");
+    } finally {
+      this.pendingIntervention = null;
+      this.isHumanInterventionNeeded = false;
+      this.humanInterventionReason = null;
+      this.log(`🎉 [HITL] Human intervention resolved for "${field.label}". Resuming automation...`, "success");
+      await this.captureFrame(page).catch(() => {});
+    }
+
+    return true;
   }
 
   public resetActiveSession(newSessionId?: string, title?: string) {
@@ -1103,6 +1361,11 @@ class AutomationRunner {
     this.currentUrl = null;
     this.currentTitle = null;
     this.latestFrame = null;
+    if (this.interventionResolver) {
+      this.interventionResolver(null);
+      this.interventionResolver = null;
+    }
+    this.pendingIntervention = null;
     this.isHumanInterventionNeeded = false;
     this.humanInterventionReason = null;
     this.isPaused = false;
@@ -1651,7 +1914,11 @@ class AutomationRunner {
         await this.cdpSession.detach().catch(() => {});
         this.cdpSession = null;
       }
-      if (context) await context.close().catch(() => {});
+      if (this.interventionResolver) {
+        this.interventionResolver(null);
+        this.interventionResolver = null;
+      }
+      this.pendingIntervention = null;
       this.isRunning = false;
       this.isPaused = false;
       this.isHumanInterventionNeeded = false;
@@ -1669,7 +1936,8 @@ class AutomationRunner {
     pacing: PacingConfig = DEFAULT_PACING,
     eventContext?: EventContext
   ): Promise<void> {
-    return fillFormFields(page, person, pacing, eventContext, (msg, level) => this.log(msg, level));
+    this.activePage = page;
+    return fillFormFields(page, person, pacing, eventContext, (msg, level) => this.log(msg, level), this);
   }
 
   public async interactWithDropdown(
@@ -2507,6 +2775,11 @@ class AutomationRunner {
         this.cdpSession = null;
       }
       if (context) await context.close().catch(() => {});
+      if (this.interventionResolver) {
+        this.interventionResolver(null);
+        this.interventionResolver = null;
+      }
+      this.pendingIntervention = null;
       this.isRunning = false;
       this.isPaused = false;
       this.isHumanInterventionNeeded = false;

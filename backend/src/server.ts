@@ -48,6 +48,7 @@ app.get("/", (c) => {
       "/api/automation/resume",
       "/api/automation/stop",
       "/api/automation/interact",
+      "/api/automation/intervention",
       "/api/sheets/sync",
     ],
   });
@@ -537,6 +538,65 @@ app.post("/api/automation/interact", async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const result = await automationRunner.handleHumanInteraction(body);
     return c.json(result);
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+// --------------------------------------------------------------------------
+// Human-in-the-Loop (HITL) Intervention Endpoints
+// --------------------------------------------------------------------------
+app.get("/api/automation/intervention", (c) => {
+  return c.json({ pending: automationRunner.getPendingIntervention() });
+});
+
+app.get("/api/automation/pending-intervention", (c) => {
+  return c.json({ pending: automationRunner.getPendingIntervention() });
+});
+
+app.post("/api/automation/intervention", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { id, value, remember } = body;
+    if (value === undefined || value === null) {
+      return c.json({ success: false, error: "Missing required 'value' parameter in request body" }, 400);
+    }
+    const resolved = await automationRunner.resolveIntervention(
+      id,
+      String(value),
+      remember !== undefined ? Boolean(remember) : true
+    );
+    if (!resolved) {
+      return c.json(
+        { success: false, error: "No pending intervention found matching id or runner was not waiting." },
+        400
+      );
+    }
+    return c.json({ success: true, message: "Intervention resolved, automation resumed." });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
+  }
+});
+
+app.post("/api/automation/resolve-intervention", async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    const { id, value, remember } = body;
+    if (value === undefined || value === null) {
+      return c.json({ success: false, error: "Missing required 'value' parameter in request body" }, 400);
+    }
+    const resolved = await automationRunner.resolveIntervention(
+      id,
+      String(value),
+      remember !== undefined ? Boolean(remember) : true
+    );
+    if (!resolved) {
+      return c.json(
+        { success: false, error: "No pending intervention found matching id or runner was not waiting." },
+        400
+      );
+    }
+    return c.json({ success: true, message: "Intervention resolved, automation resumed." });
   } catch (err: any) {
     return c.json({ success: false, error: err.message }, 500);
   }
