@@ -19,10 +19,11 @@ import { EASE_OUT, SPRING_SWAP, SPRING_PRESS } from "@/lib/ease";
 import { cn } from "@/lib/utils";
 
 export function AuthModal() {
-  const { isAuthModalOpen, closeAuthModal, login, register } = useAuth();
+  const { isAuthModalOpen, closeAuthModal, login, register, quickLogin } = useAuth();
   const reduce = useReducedMotion() ?? false;
 
   const [mode, setMode] = useState<"login" | "register">("login");
+  const [role, setRole] = useState<"user" | "admin">("user");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -30,6 +31,21 @@ export function AuthModal() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isAuthModalOpen) return null;
+
+  const handleQuickDemo = async (targetRole: "admin" | "user") => {
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      const res = await quickLogin(targetRole);
+      if (!res.success) {
+        setError(res.error || "Failed demo login");
+      }
+    } catch (err: any) {
+      setError(err.message || "Demo login failed");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,7 +64,7 @@ export function AuthModal() {
           setIsSubmitting(false);
           return;
         }
-        const res = await register(name, email, password);
+        const res = await register(name, email, password, role);
         if (!res.success) {
           setError(res.error || "Failed to create account");
         }
@@ -200,6 +216,42 @@ export function AuthModal() {
             </div>
           </div>
 
+          {mode === "register" && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground block">
+                Account Type
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRole("user")}
+                  className={cn(
+                    "p-2.5 rounded-xl border text-left transition-all cursor-pointer",
+                    role === "user"
+                      ? "bg-primary/10 border-primary text-foreground ring-1 ring-primary/40 font-semibold"
+                      : "bg-background border-border text-muted-foreground hover:border-border/80"
+                  )}
+                >
+                  <div className="text-xs font-bold text-foreground">Attendee / User</div>
+                  <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">3-page clean studio</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRole("admin")}
+                  className={cn(
+                    "p-2.5 rounded-xl border text-left transition-all cursor-pointer",
+                    role === "admin"
+                      ? "bg-primary/10 border-primary text-foreground ring-1 ring-primary/40 font-semibold"
+                      : "bg-background border-border text-muted-foreground hover:border-border/80"
+                  )}
+                >
+                  <div className="text-xs font-bold text-foreground">Event Admin</div>
+                  <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">Curate & categorize</div>
+                </button>
+              </div>
+            </div>
+          )}
+
           <Button
             type="submit"
             disabled={isSubmitting}
@@ -212,12 +264,39 @@ export function AuthModal() {
               </>
             ) : (
               <>
-                <span>{mode === "login" ? "Sign In" : "Register"}</span>
+                <span>{mode === "login" ? "Sign In" : `Register as ${role === "admin" ? "Admin" : "User"}`}</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}
           </Button>
         </form>
+
+        {/* 1-Click Instant Demo Access */}
+        <div className="mt-4 pt-3.5 border-t border-border/60">
+          <div className="text-[10px] uppercase font-mono font-bold tracking-wider text-muted-foreground text-center mb-2">
+            Instant 1-Click Demo Login
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => handleQuickDemo("admin")}
+              className="px-2.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <ShieldCheck className="w-3.5 h-3.5" />
+              <span>Admin Demo</span>
+            </button>
+            <button
+              type="button"
+              disabled={isSubmitting}
+              onClick={() => handleQuickDemo("user")}
+              className="px-2.5 py-1.5 rounded-xl bg-primary/10 hover:bg-primary/20 border border-primary/30 text-primary text-xs font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+            >
+              <UserIcon className="w-3.5 h-3.5" />
+              <span>User Demo</span>
+            </button>
+          </div>
+        </div>
 
         <div className="mt-5 text-center">
           <p className="text-[11px] text-muted-foreground">

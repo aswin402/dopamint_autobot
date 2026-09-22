@@ -24,7 +24,8 @@ interface AuthContextType {
   openAuthModal: () => void;
   closeAuthModal: () => void;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
-  register: (name: string, email: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  register: (name: string, email: string, password: string, role?: string) => Promise<{ success: boolean; error?: string }>;
+  quickLogin: (role: "admin" | "user") => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -78,12 +79,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const register = async (name: string, email: string, password: string) => {
+  const register = async (name: string, email: string, password: string, role: string = "user") => {
     try {
       const res = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email, password, role }),
       });
 
       const data = await res.json();
@@ -96,6 +97,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message || "Network error during registration" };
+    }
+  };
+
+  const quickLogin = async (role: "admin" | "user") => {
+    if (role === "admin") {
+      return login("admin@dopamint.ai", "admin123");
+    } else {
+      return login("user@dopamint.ai", "user123");
     }
   };
 
@@ -123,6 +132,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         closeAuthModal,
         login,
         register,
+        quickLogin,
         logout,
         refreshUser,
       }}

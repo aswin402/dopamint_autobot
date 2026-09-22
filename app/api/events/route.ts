@@ -7,6 +7,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const filter = searchParams.get("filter") || "all";
     const search = searchParams.get("search") || "";
+    const category = searchParams.get("category") || "";
 
     // 1. Try forwarding to decoupled Hono backend
     const queryString = searchParams.toString();
@@ -29,6 +30,9 @@ export async function GET(req: NextRequest) {
     if (filter === "sold_out") {
       where.soldOut = true;
     }
+    if (category && category !== "all" && category !== "All") {
+      where.category = category;
+    }
 
     const events = await prisma.event.findMany({
       where,
@@ -36,6 +40,28 @@ export async function GET(req: NextRequest) {
       include: {
         registrations: true,
       },
+    });
+
+    // Fetch distinct categories
+    const allEventsForCats = await prisma.event.findMany({
+      select: { category: true },
+    });
+    const categoriesSet = new Set<string>();
+    allEventsForCats.forEach((e) => {
+      if (e.category && e.category.trim()) {
+        categoriesSet.add(e.category.trim());
+      }
+    });
+    const categories = Array.from(categoriesSet).sort();
+
+    // Group events by category
+    const eventsByCategory: Record<string, any[]> = {};
+    events.forEach((ev) => {
+      const cat = ev.category || "General";
+      if (!eventsByCategory[cat]) {
+        eventsByCategory[cat] = [];
+      }
+      eventsByCategory[cat].push(ev);
     });
 
     // Compute metrics
@@ -52,6 +78,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       attendees,
       events,
+      categories,
+      eventsByCategory,
       metrics: {
         totalEvents,
         totalAttendees: attendees.length,
@@ -86,7 +114,52 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(await honoRes.json());
     }
 
-    let { id, title, url, date = "", platform = "luma", soldOut = false, requireApproval = false } = body;
+    // Bulk creation fallback
+    if (Array.isArray(body.events) || Array.isArray(body)) {
+      const incomingList = Array.isArray(body.events) ? body.events : body;
+      const defaultCategory = body.category || "General";
+      const createdList = [];
+      const skippedList = [];
+
+      const maxEvent = await prisma.event.findFirst({ orderBy: { id: "desc" } });
+      let nextId = (maxEvent?.id || 0) + 1;
+
+      for (const item of incomingList) {
+        const title = (item.title || "").trim();
+        const url = (item.url || "").trim();
+        if (!title || !url) continue;
+
+        const existing = await prisma.event.findFirst({ where: { url } });
+        if (existing) {
+          skippedList.push({ url, title, reason: "Already exists" });
+          continue;
+        }
+
+        const created = await prisma.event.create({
+          data: {
+            id: nextId++,
+            title,
+            url,
+            date: item.date || "",
+            category: (item.category || defaultCategory || "General").trim(),
+            platform: item.platform || "luma",
+            isLuma: url.includes("lu.ma") || url.includes("luma.com") || item.platform === "luma",
+            soldOut: Boolean(item.soldOut),
+            requireApproval: Boolean(item.requireApproval),
+          },
+        });
+        createdList.push(created);
+      }
+
+      return NextResponse.json({
+        success: true,
+        createdCount: createdList.length,
+        skippedCount: skippedList.length,
+        events: createdList,
+      }, { status: 201 });
+    }
+
+    let { id, title, url, date = "", category = "General", platform = "luma", soldOut = false, requireApproval = false } = body;
 
     if (!title || !url) {
       return NextResponse.json({ error: "Event title and URL are required." }, { status: 400 });
@@ -106,8 +179,9 @@ export async function POST(req: NextRequest) {
         title,
         url,
         date,
+        category: category ? category.trim() : "General",
         platform,
-        isLuma: url.includes("luma.com") || platform === "luma",
+        isLuma: url.includes("lu.ma") || url.includes("luma.com") || platform === "luma",
         soldOut: Boolean(soldOut),
         requireApproval: Boolean(requireApproval),
       },

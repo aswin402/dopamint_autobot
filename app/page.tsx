@@ -8,14 +8,20 @@ import { ChatGPTView } from "@/components/ChatGPTView";
 import { TeamRoster } from "@/components/TeamRoster";
 import { SheetsSyncView } from "@/components/SheetsSyncView";
 import { UniversalFormStudio } from "@/components/UniversalFormStudio";
+import { AdminEventDashboard } from "@/components/admin/AdminEventDashboard";
+import { UserFormPage } from "@/components/user/UserFormPage";
+import { UserLiveMonitorPage } from "@/components/user/UserLiveMonitorPage";
 import { GlobalChatBar } from "@/components/GlobalChatBar";
 import ExportModal from "@/components/ExportModal";
+import { useAuth } from "@/context/AuthContext";
 import { playNotificationChime, triggerDesktopNotification } from "@/lib/notifications";
 import { CheckCircle2, Bell, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<NavTab>("dashboard");
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [activeTab, setActiveTab] = useState<NavTab>("form");
   const [activeDeckTab, setActiveDeckTab] = useState<"matrix" | "logs" | "nonsubmitted">("matrix");
 
   const [attendees, setAttendees] = useState<any[]>([]);
@@ -225,6 +231,15 @@ export default function Home() {
     };
   }, []);
 
+  // Sync active tab when role changes
+  useEffect(() => {
+    if (isAdmin && (activeTab === "form" || activeTab === "dashboard")) {
+      setActiveTab("admin_events");
+    } else if (!isAdmin && activeTab === "admin_events") {
+      setActiveTab("form");
+    }
+  }, [isAdmin]);
+
   const handleStartAutomation = async (eventIds?: number[]) => {
     try {
       const payload: any = {
@@ -244,8 +259,7 @@ export default function Home() {
       });
 
       fetchRunnerStatus();
-      setActiveTab("automations");
-      setActiveDeckTab("logs");
+      setActiveTab("live");
     } catch (e) {
       alert("Failed to start automation");
     }
@@ -320,6 +334,61 @@ export default function Home() {
       <div className="flex-1 flex flex-col h-full min-w-0 bg-background relative overflow-hidden">
         {/* Dynamic Center Canvas */}
         <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden relative">
+          {/* 1. Admin Event Registry & Category Curator */}
+          {activeTab === "admin_events" && (
+            <AdminEventDashboard
+              events={events}
+              onRefreshEvents={fetchEventsData}
+              isLoading={isLoadingEvents}
+            />
+          )}
+
+          {/* 2. User Form & Curated Events Registration Page */}
+          {activeTab === "form" && (
+            <UserFormPage
+              attendees={attendees}
+              events={events}
+              selectedAttendeeId={selectedAttendeeId}
+              onSelectAttendee={(id) => setSelectedAttendeeId(id)}
+              onRefreshData={fetchEventsData}
+              onStartAutomation={handleStartAutomation}
+              onNavigateToLive={() => setActiveTab("live")}
+              isVisualMode={isVisualMode}
+              onToggleVisualMode={toggleVisualMode}
+            />
+          )}
+
+          {/* 3. User Live Background Monitor Screen */}
+          {activeTab === "live" && (
+            <UserLiveMonitorPage
+              runnerStatus={runnerStatus}
+              isVisualMode={isVisualMode}
+              onToggleVisualMode={toggleVisualMode}
+              onPauseAutomation={handlePauseAutomation}
+              onResumeAutomation={handleResumeAutomation}
+              onStopAutomation={handleStopAutomation}
+              onNavigateToForm={() => setActiveTab("form")}
+              attendees={attendees}
+            />
+          )}
+
+          {/* 4. AI Chat Assistant (Page 1 for regular users) */}
+          {activeTab === "chat" && (
+            <ChatGPTView
+              onTriggerAutomation={handleStartAutomation}
+              onPauseAutomation={handlePauseAutomation}
+              onResumeAutomation={handleResumeAutomation}
+              onStopAutomation={handleStopAutomation}
+              attendees={attendees}
+              events={events}
+              refreshData={fetchEventsData}
+              isVisualMode={isVisualMode}
+              onToggleVisualMode={toggleVisualMode}
+              selectedAttendeeName={selectedAttendee?.name}
+            />
+          )}
+
+          {/* Fallback Legacy Views for Admin Deep Dive */}
           {activeTab === "dashboard" && (
             <DashboardOverview
               metrics={metrics}
@@ -366,21 +435,6 @@ export default function Home() {
               onLaunchSuccess={() => {
                 fetchEventsData();
               }}
-            />
-          )}
-
-          {activeTab === "chat" && (
-            <ChatGPTView
-              onTriggerAutomation={handleStartAutomation}
-              onPauseAutomation={handlePauseAutomation}
-              onResumeAutomation={handleResumeAutomation}
-              onStopAutomation={handleStopAutomation}
-              attendees={attendees}
-              events={events}
-              refreshData={fetchEventsData}
-              isVisualMode={isVisualMode}
-              onToggleVisualMode={toggleVisualMode}
-              selectedAttendeeName={selectedAttendee?.name}
             />
           )}
 

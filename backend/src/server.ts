@@ -70,6 +70,7 @@ app.get("/api/events", async (c) => {
   try {
     const filter = c.req.query("filter") || "all";
     const search = c.req.query("search") || "";
+    const category = c.req.query("category") || "";
 
     const attendees = await prisma.attendee.findMany({
       orderBy: { name: "asc" },
@@ -82,6 +83,9 @@ app.get("/api/events", async (c) => {
     if (filter === "sold_out") {
       where.soldOut = true;
     }
+    if (category && category !== "all" && category !== "All") {
+      where.category = category;
+    }
 
     const events = await prisma.event.findMany({
       where,
@@ -89,6 +93,28 @@ app.get("/api/events", async (c) => {
       include: {
         registrations: true,
       },
+    });
+
+    // Fetch all distinct categories
+    const allEventsForCats = await prisma.event.findMany({
+      select: { category: true },
+    });
+    const categoriesSet = new Set<string>();
+    allEventsForCats.forEach((e) => {
+      if (e.category && e.category.trim()) {
+        categoriesSet.add(e.category.trim());
+      }
+    });
+    const categories = Array.from(categoriesSet).sort();
+
+    // Group events by category
+    const eventsByCategory: Record<string, any[]> = {};
+    events.forEach((ev) => {
+      const cat = ev.category || "General";
+      if (!eventsByCategory[cat]) {
+        eventsByCategory[cat] = [];
+      }
+      eventsByCategory[cat].push(ev);
     });
 
     const totalEvents = events.length;
@@ -104,6 +130,8 @@ app.get("/api/events", async (c) => {
     return c.json({
       attendees,
       events,
+      categories,
+      eventsByCategory,
       metrics: {
         totalEvents,
         totalAttendees: attendees.length,
@@ -123,12 +151,59 @@ app.get("/api/events", async (c) => {
 });
 
 // --------------------------------------------------------------------------
-// Events CRUD API
+// Events CRUD API (Single & Bulk)
 // --------------------------------------------------------------------------
 app.post("/api/events", async (c) => {
   try {
     const body = await c.req.json();
-    let { id, title, url, date, platform, soldOut } = body;
+
+    // Bulk creation support
+    if (Array.isArray(body.events) || Array.isArray(body)) {
+      const incomingList = Array.isArray(body.events) ? body.events : body;
+      const defaultCategory = body.category || "General";
+      const createdList = [];
+      const skippedList = [];
+
+      const maxEvent = await prisma.event.findFirst({ orderBy: { id: "desc" } });
+      let nextId = (maxEvent?.id || 0) + 1;
+
+      for (const item of incomingList) {
+        const title = (item.title || "").trim();
+        const url = (item.url || "").trim();
+        if (!title || !url) continue;
+
+        // Check if event with same URL already exists
+        const existing = await prisma.event.findFirst({ where: { url } });
+        if (existing) {
+          skippedList.push({ url, title, reason: "Already exists" });
+          continue;
+        }
+
+        const created = await prisma.event.create({
+          data: {
+            id: nextId++,
+            title,
+            url,
+            date: item.date || "",
+            category: (item.category || defaultCategory || "General").trim(),
+            platform: item.platform || "luma",
+            isLuma: url.includes("lu.ma") || url.includes("luma.com") || item.platform === "luma",
+            soldOut: Boolean(item.soldOut),
+            requireApproval: Boolean(item.requireApproval),
+          },
+        });
+        createdList.push(created);
+      }
+
+      return c.json({
+        success: true,
+        createdCount: createdList.length,
+        skippedCount: skippedList.length,
+        events: createdList,
+      }, 201);
+    }
+
+    let { id, title, url, date, platform, category, soldOut, requireApproval } = body;
     if (!title || !url) {
       return c.json({ error: "Title and URL are required" }, 400);
     }
@@ -145,8 +220,11 @@ app.post("/api/events", async (c) => {
         title,
         url,
         date: date || "",
+        category: (category || "General").trim(),
         platform: platform || "luma",
+        isLuma: url.includes("lu.ma") || url.includes("luma.com") || platform === "luma",
         soldOut: Boolean(soldOut),
+        requireApproval: Boolean(requireApproval),
       },
     });
     return c.json({ success: true, event }, 201);
@@ -159,7 +237,7 @@ app.put("/api/events/:id", async (c) => {
   try {
     const id = Number(c.req.param("id"));
     const body = await c.req.json();
-    const { title, url, date, platform, soldOut } = body;
+    const { title, url, date, platform, category, soldOut, requireApproval } = body;
 
     const event = await prisma.event.update({
       where: { id },
@@ -168,7 +246,10 @@ app.put("/api/events/:id", async (c) => {
         url,
         date,
         platform,
+        category: category !== undefined ? (category ? category.trim() : "General") : undefined,
+        isLuma: url ? (url.includes("lu.ma") || url.includes("luma.com") || platform === "luma") : undefined,
         soldOut: soldOut !== undefined ? Boolean(soldOut) : undefined,
+        requireApproval: requireApproval !== undefined ? Boolean(requireApproval) : undefined,
       },
     });
     return c.json({ success: true, event });

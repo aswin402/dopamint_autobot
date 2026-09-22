@@ -41,13 +41,15 @@ export async function POST(req: NextRequest) {
     // Hash password
     const hashedPassword = await hashPassword(password);
 
+    const userRole = body.role === "admin" ? "admin" : "user";
+
     // Create user
     const user = await prisma.user.create({
       data: {
         name: trimmedName,
         email: trimmedEmail,
         password: hashedPassword,
-        role: "user",
+        role: userRole,
       },
       select: {
         id: true,

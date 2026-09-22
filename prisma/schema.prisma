@@ -53,10 +53,11 @@ model Attendee {
 }
 
 model Event {
-  id              Int            @id
+  id              Int            @id @default(autoincrement())
   title           String
   url             String
   date            String?
+  category        String?        @default("General")
   platform        String         @default("luma") // "luma", "eventbrite", "custom"
   isLuma          Boolean        @default(true)
   ticketText      String?

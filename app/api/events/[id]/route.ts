@@ -20,7 +20,7 @@ export async function PUT(
       return NextResponse.json(await honoRes.json());
     }
 
-    const { title, url, date, platform, soldOut, requireApproval } = body;
+    const { title, url, date, platform, category, soldOut, requireApproval } = body;
 
     const event = await prisma.event.update({
       where: { id: eventId },
@@ -29,7 +29,8 @@ export async function PUT(
         url,
         date,
         platform,
-        isLuma: url ? url.includes("luma.com") || platform === "luma" : undefined,
+        category: category !== undefined ? (category ? category.trim() : "General") : undefined,
+        isLuma: url ? (url.includes("lu.ma") || url.includes("luma.com") || platform === "luma") : undefined,
         soldOut: soldOut !== undefined ? Boolean(soldOut) : undefined,
         requireApproval: requireApproval !== undefined ? Boolean(requireApproval) : undefined,
       },

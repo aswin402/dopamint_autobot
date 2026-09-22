@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   LayoutDashboard,
   MessageSquare,
@@ -19,11 +19,24 @@ import {
   LogIn,
   LogOut,
   User as UserIcon,
+  Tv,
+  FileText,
+  Layers,
+  Shield,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useAuth } from "@/context/AuthContext";
 
-export type NavTab = "dashboard" | "automations" | "form_runner" | "chat" | "team" | "sheets";
+export type NavTab =
+  | "chat"
+  | "form"
+  | "live"
+  | "admin_events"
+  | "dashboard"
+  | "automations"
+  | "form_runner"
+  | "team"
+  | "sheets";
 
 interface SidebarProps {
   activeTab: NavTab;
@@ -66,39 +79,61 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  const navItems: { id: NavTab; label: string; icon: React.ReactNode; badge?: string }[] = [
-    {
-      id: "dashboard",
-      label: "Dashboard",
-      icon: <LayoutDashboard className="w-4.5 h-4.5 flex-shrink-0" />,
-    },
-    {
-      id: "automations",
-      label: "Automations",
-      icon: <Zap className="w-4.5 h-4.5 flex-shrink-0" />,
-      badge: activeJobRunning ? "LIVE" : undefined,
-    },
-    {
-      id: "form_runner",
-      label: "Form Studio",
-      icon: <Globe className="w-4.5 h-4.5 flex-shrink-0" />,
-    },
-    {
-      id: "chat",
-      label: "AI Assistant",
-      icon: <MessageSquare className="w-4.5 h-4.5 flex-shrink-0" />,
-    },
-    {
-      id: "team",
-      label: "Team Roster",
-      icon: <Users className="w-4.5 h-4.5 flex-shrink-0" />,
-    },
-    {
-      id: "sheets",
-      label: "Sheets Sync",
-      icon: <FileSpreadsheet className="w-4.5 h-4.5 flex-shrink-0" />,
-    },
-  ];
+  const isAdmin = user?.role === "admin";
+
+  // Role-based Navigation Items
+  const navItems: {
+    id: NavTab;
+    label: string;
+    icon: React.ReactNode;
+    badge?: string;
+  }[] = useMemo(() => {
+    if (isAdmin) {
+      return [
+        {
+          id: "admin_events",
+          label: "Event Registry",
+          icon: <Layers className="w-4.5 h-4.5 flex-shrink-0" />,
+        },
+        {
+          id: "live",
+          label: "Live Monitor",
+          icon: <Tv className="w-4.5 h-4.5 flex-shrink-0" />,
+          badge: activeJobRunning ? "LIVE" : undefined,
+        },
+        {
+          id: "chat",
+          label: "AI Copilot",
+          icon: <MessageSquare className="w-4.5 h-4.5 flex-shrink-0" />,
+        },
+        {
+          id: "form",
+          label: "User Form Preview",
+          icon: <FileText className="w-4.5 h-4.5 flex-shrink-0" />,
+        },
+      ];
+    }
+
+    // STRICTLY 3 PAGES FOR USER
+    return [
+      {
+        id: "chat",
+        label: "AI Assistant",
+        icon: <MessageSquare className="w-4.5 h-4.5 flex-shrink-0" />,
+      },
+      {
+        id: "form",
+        label: "Register & Events",
+        icon: <FileText className="w-4.5 h-4.5 flex-shrink-0" />,
+      },
+      {
+        id: "live",
+        label: "Live Monitor",
+        icon: <Tv className="w-4.5 h-4.5 flex-shrink-0" />,
+        badge: activeJobRunning ? "LIVE" : undefined,
+      },
+    ];
+  }, [isAdmin, activeJobRunning]);
 
   return (
     <aside
@@ -112,9 +147,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {isCollapsed ? (
           <div className="flex flex-col items-center gap-2 py-1">
             <button
-              onClick={() => setActiveTab("dashboard")}
+              onClick={() => setActiveTab(isAdmin ? "admin_events" : "form")}
               className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20 hover:bg-primary/20 transition-all cursor-pointer shadow-2xs relative"
-              title="dopamint - Dashboard"
+              title={isAdmin ? "dopamint - Admin Event Registry" : "dopamint - Register & Events"}
             >
               <Sparkles className="w-5 h-5 text-primary" />
               {activeJobRunning && (
@@ -132,7 +167,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         ) : (
           <div className="flex items-center justify-between px-1 pt-1 pb-0.5">
             <div
-              onClick={() => setActiveTab("dashboard")}
+              onClick={() => setActiveTab(isAdmin ? "admin_events" : "form")}
               className="flex items-center gap-2.5 cursor-pointer overflow-hidden group"
             >
               <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 border border-primary/20 group-hover:bg-primary/20 transition-all shadow-2xs relative">
@@ -145,6 +180,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="flex items-center gap-1.5">
                   <span className="font-bold text-base tracking-tight text-foreground">
                     dopamint
+                  </span>
+                  <span
+                    className={`text-[9px] font-bold px-1.5 py-0.2 rounded-full uppercase ${
+                      isAdmin
+                        ? "bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30"
+                        : "bg-primary/20 text-primary border border-primary/30"
+                    }`}
+                  >
+                    {isAdmin ? "ADMIN" : "USER"}
                   </span>
                   {runnerStatus?.isRunning ? (
                     <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-600 dark:text-amber-400 animate-pulse uppercase">
