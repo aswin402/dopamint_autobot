@@ -354,8 +354,26 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
 
   // Handle human intervention submission
   const handleInterventionSubmit = async () => {
-    const pending = runnerStatus?.pendingIntervention;
-    if (!pending?.id) return;
+    let pending = runnerStatus?.pendingIntervention;
+    if (!pending?.id) {
+      try {
+        const checkRes = await fetch("/api/automation/intervention");
+        if (checkRes.ok) {
+          const checkData = await checkRes.json();
+          if (checkData?.pending?.id) {
+            pending = checkData.pending;
+          }
+        }
+      } catch {}
+    }
+
+    if (!pending?.id) {
+      setInterventionToast({
+        message: "Syncing question details from runner... please click again in a moment.",
+        type: "error",
+      });
+      return;
+    }
     if (!interventionValue.trim() && pending.fieldType !== "checkbox") return;
 
     setIsSubmittingIntervention(true);
