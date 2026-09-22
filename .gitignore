@@ -50,6 +50,7 @@ yarn-error.log*
 *.jpeg
 /screenshots
 .sync_cache/
+.superpowers/
 
 # vercel
 .vercel
