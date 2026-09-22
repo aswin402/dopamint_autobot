@@ -196,7 +196,123 @@ async function runTests() {
   if (res6.confidence < 0.70 || res6.requiresHumanIntervention) {
     throw new Error(`Scenario 6 Failed: Expected confidence >= 0.70 for synthesized response`);
   }
-  console.log(`✅ Scenario 6 Passed: Contextual essay synthesized with length ${res6.value.length} chars.`);
+  if (res6.shouldRemember) {
+    throw new Error(`Scenario 6 Failed: Expected shouldRemember to be false for event-specific essay`);
+  }
+  console.log(`✅ Scenario 6 Passed: Contextual essay synthesized with length ${res6.value.length} chars (shouldRemember: false).`);
+  passedScenarios++;
+
+  // -------------------------------------------------------------
+  // Scenario 7: Textarea Secret Priority Check (Review Finding 1)
+  // -------------------------------------------------------------
+  console.log("\n🧪 --- Scenario 7: Textarea Secret Passphrase Priority ---");
+  const field7: FormFieldPrompt = {
+    label: "Please enter your secret VIP invite code *",
+    type: "textarea", // Note: textarea type must NOT synthesize an essay when asking for secret!
+    isRequired: true,
+  };
+  const res7 = await resolveFormField(field7, attendee, sampleEvent);
+  console.log("Result 7:", JSON.stringify(res7, null, 2));
+
+  if (res7.confidence >= 0.70 || !res7.requiresHumanIntervention || res7.matchedFrom !== "unknown") {
+    throw new Error(`Scenario 7 Failed: Expected secret check to take precedence over textarea essay synthesis`);
+  }
+  console.log("✅ Scenario 7 Passed: Secret priority enforced over textarea.");
+  passedScenarios++;
+
+  // -------------------------------------------------------------
+  // Scenario 8: Stopword Dominance in Similarity (Review Finding 3)
+  // -------------------------------------------------------------
+  console.log("\n🧪 --- Scenario 8: Stopword Dominance in String Similarity ---");
+  const simScore = calculateSimilarity("what is your discord", "what is your telegram handle");
+  console.log("Similarity between Discord question and Telegram handle question:", simScore);
+  if (simScore > 0.3) {
+    throw new Error(`Scenario 8 Failed: Expected near-zero similarity between discord and telegram, got ${simScore}`);
+  }
+  console.log("✅ Scenario 8 Passed: Distinctive domain tokens properly protected from stopword overlap.");
+  passedScenarios++;
+
+  // -------------------------------------------------------------
+  // Scenario 9: Korean Single-Field '이름' (Review Finding 5)
+  // -------------------------------------------------------------
+  console.log("\n🧪 --- Scenario 9: Korean Single-Field '이름' Resolution ---");
+  const field9: FormFieldPrompt = {
+    label: "이름 *",
+    type: "text",
+    isRequired: true,
+  };
+  const res9 = await resolveFormField(field9, attendee, sampleEvent);
+  console.log("Result 9:", JSON.stringify(res9, null, 2));
+
+  if (res9.value !== attendee.name) {
+    throw new Error(`Scenario 9 Failed: Expected full name '${attendee.name}', got '${res9.value}'`);
+  }
+  console.log("✅ Scenario 9 Passed: Korean single-field '이름' correctly resolved to Full Name.");
+  passedScenarios++;
+
+  // -------------------------------------------------------------
+  // Scenario 10: Choice-Based Social Question (Review Finding 6)
+  // -------------------------------------------------------------
+  console.log("\n🧪 --- Scenario 10: Choice-Based Social Question Fallthrough ---");
+  const field10: FormFieldPrompt = {
+    label: "Do you have a Telegram account?",
+    type: "radio",
+    options: ["Yes", "No"],
+    isRequired: true,
+  };
+  const res10 = await resolveFormField(field10, attendee, sampleEvent);
+  console.log("Result 10:", JSON.stringify(res10, null, 2));
+
+  if (res10.value === attendee.telegram) {
+    throw new Error(`Scenario 10 Failed: Did not expect raw handle '${attendee.telegram}' in radio choices [Yes, No]`);
+  }
+  if (!field10.options.includes(res10.value)) {
+    throw new Error(`Scenario 10 Failed: Expected resolved value to be in field.options [Yes, No], got '${res10.value}'`);
+  }
+  console.log(`✅ Scenario 10 Passed: Choice-based social field resolved to valid option "${res10.value}".`);
+  passedScenarios++;
+
+  // -------------------------------------------------------------
+  // Scenario 11: Terms & Privacy Consent Checkbox (Review Finding 7)
+  // -------------------------------------------------------------
+  console.log("\n🧪 --- Scenario 11: Terms & Privacy Consent Auto-Agreement ---");
+  const field11: FormFieldPrompt = {
+    label: "I agree to the Terms of Service & Privacy Policy (필수)",
+    type: "checkbox",
+    isRequired: true,
+  };
+  const res11 = await resolveFormField(field11, attendee, sampleEvent);
+  console.log("Result 11:", JSON.stringify(res11, null, 2));
+
+  if (res11.value !== "true" || res11.confidence < 0.95 || res11.matchedFrom !== "fastpath") {
+    throw new Error(`Scenario 11 Failed: Expected fast-path auto-consent value 'true'`);
+  }
+  console.log("✅ Scenario 11 Passed: Terms agreement checkbox auto-resolved to 'true'.");
+  passedScenarios++;
+
+  // -------------------------------------------------------------
+  // Scenario 12: Case-Insensitive Wallet Extraction (Review Finding 8)
+  // -------------------------------------------------------------
+  console.log("\n🧪 --- Scenario 12: Case-Insensitive Wallet Extraction ---");
+  const customAttendee = {
+    ...attendee,
+    wallets: JSON.stringify({
+      EVM: "0x71C8366420A09260b5e143F7396CE352360C7236",
+      Solana: "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+    }),
+  };
+  const field12: FormFieldPrompt = {
+    label: "Submit your EVM Wallet address",
+    type: "text",
+    isRequired: true,
+  };
+  const res12 = await resolveFormField(field12, customAttendee, sampleEvent);
+  console.log("Result 12:", JSON.stringify(res12, null, 2));
+
+  if (res12.value !== "0x71C8366420A09260b5e143F7396CE352360C7236") {
+    throw new Error(`Scenario 12 Failed: Expected uppercase key 'EVM' to be extracted, got '${res12.value}'`);
+  }
+  console.log("✅ Scenario 12 Passed: Normalized case-insensitive wallet extraction verified.");
   passedScenarios++;
 
   console.log(`\n🎉 ALL ${passedScenarios} SCENARIOS PASSED SUCCESSFULLY! Task 2 Field Resolver Engine verified.\n`);

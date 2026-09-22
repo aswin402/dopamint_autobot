@@ -45,8 +45,39 @@ export function isFieldRequired(field: FormFieldPrompt): boolean {
   return /\*|\((required|필수)\)|\[(required|필수)\]|\b필수\b/i.test(text);
 }
 
+const QUESTION_STOPWORDS = new Set([
+  "what",
+  "is",
+  "are",
+  "your",
+  "you",
+  "please",
+  "enter",
+  "provide",
+  "do",
+  "the",
+  "a",
+  "an",
+  "handle",
+  "id",
+  "link",
+  "url",
+  "of",
+  "to",
+  "in",
+  "for",
+  "on",
+  "with",
+  "my",
+  "any",
+  "which",
+  "give",
+  "tell",
+]);
+
 /**
  * Calculates string similarity using word token overlap, containment, and character bigram Dice coefficient.
+ * Filters out generic question stopwords to prevent false positives across distinct domain tokens.
  * Returns a score between 0.0 and 1.0.
  */
 export function calculateSimilarity(str1: string, str2: string): number {
@@ -60,6 +91,34 @@ export function calculateSimilarity(str1: string, str2: string): number {
   const tokens2 = s2.split(" ").filter((w) => w.length > 1);
   if (tokens1.length === 0 || tokens2.length === 0) return 0;
 
+  // Filter stopwords for distinct domain token comparison
+  const contentTokens1 = tokens1.filter((w) => !QUESTION_STOPWORDS.has(w));
+  const contentTokens2 = tokens2.filter((w) => !QUESTION_STOPWORDS.has(w));
+
+  // If both queries have distinctive content tokens, ensure they overlap
+  // e.g. "what is your discord" vs "what is your telegram handle" => 0 overlap on [discord] vs [telegram]
+  if (contentTokens1.length > 0 && contentTokens2.length > 0) {
+    const cSet1 = new Set(contentTokens1);
+    const cSet2 = new Set(contentTokens2);
+    let cIntersection = 0;
+    for (const t of cSet1) {
+      if (cSet2.has(t)) cIntersection++;
+    }
+
+    // If distinctive content tokens have zero overlap, reject false positive match
+    if (cIntersection === 0) return 0;
+
+    const cUnion = new Set([...contentTokens1, ...contentTokens2]).size;
+    const cJaccard = cUnion > 0 ? cIntersection / cUnion : 0;
+    const cContainment = cIntersection / Math.min(cSet1.size, cSet2.size);
+
+    if (cContainment >= 0.8 && cIntersection >= 1) {
+      return Math.max(0.85, cJaccard);
+    }
+    return cJaccard;
+  }
+
+  // Fallback for non-stopword or non-space languages (e.g. Korean / CJK)
   const set1 = new Set(tokens1);
   const set2 = new Set(tokens2);
 
@@ -93,7 +152,6 @@ export function calculateSimilarity(str1: string, str2: string): number {
   const totalBg = Math.max(0, s1.length - 1) + Math.max(0, s2.length - 1);
   const dice = totalBg > 0 ? (2 * bgOverlap) / totalBg : 0;
 
-  // If one query is a strong subset of the other (e.g. "what is your discord" in "what is your discord username")
   if (containment >= 0.8 && intersection >= 2) {
     return Math.max(0.85, Math.max(jaccard, dice));
   }
@@ -115,15 +173,37 @@ function extractWalletAddress(wallets: any, promptText: string): string {
   }
 
   if (typeof wallets === "object" && wallets !== null) {
+    // Normalize keys to lowercase for case-insensitive lookup
+    const normalizedWallets: Record<string, string> = {};
+    for (const [k, v] of Object.entries(wallets)) {
+      if (v !== undefined && v !== null) {
+        normalizedWallets[k.toLowerCase().trim()] = String(v);
+      }
+    }
+
     const isSolana = /solana|sol\b|phantom/i.test(promptText);
     const isEvm = /evm|eth|ethereum|erc20|metamask|0x/i.test(promptText);
     const isXrp = /xrp|ripple/i.test(promptText);
 
-    if (isSolana && wallets.solana) return wallets.solana;
-    if (isEvm && wallets.evm) return wallets.evm;
-    if (isXrp && wallets.xrp) return wallets.xrp;
+    if (isSolana && (normalizedWallets.solana || normalizedWallets.sol || normalizedWallets.phantom)) {
+      return normalizedWallets.solana || normalizedWallets.sol || normalizedWallets.phantom;
+    }
+    if (isEvm && (normalizedWallets.evm || normalizedWallets.eth || normalizedWallets.ethereum || normalizedWallets.metamask)) {
+      return normalizedWallets.evm || normalizedWallets.eth || normalizedWallets.ethereum || normalizedWallets.metamask;
+    }
+    if (isXrp && (normalizedWallets.xrp || normalizedWallets.ripple)) {
+      return normalizedWallets.xrp || normalizedWallets.ripple;
+    }
 
-    return wallets.evm || wallets.solana || wallets.xrp || Object.values(wallets)[0] || "";
+    return (
+      normalizedWallets.evm ||
+      normalizedWallets.solana ||
+      normalizedWallets.eth ||
+      normalizedWallets.sol ||
+      normalizedWallets.xrp ||
+      Object.values(normalizedWallets)[0] ||
+      ""
+    );
   }
 
   return String(wallets);
@@ -161,6 +241,23 @@ function tryFastPathMatch(field: FormFieldPrompt, attendee: any): FieldResolutio
   const lowerCombined = combined.toLowerCase();
   const hasOptions = Array.isArray(field.options) && field.options.length > 0;
 
+  // 0. Terms of Service / Privacy Agreement Checkboxes
+  if (
+    field.type === "checkbox" ||
+    /\b(terms|privacy|policy|agree|agreement|consent|약관|동의|개인정보)\b/i.test(combined)
+  ) {
+    if (/\b(terms|privacy|policy|agree|agreement|consent|약관|동의|개인정보)\b/i.test(combined)) {
+      return {
+        value: "true",
+        confidence: 0.99,
+        shouldRemember: false,
+        reasoning: "Fast-path auto-consent for terms of service / privacy policy agreement",
+        requiresHumanIntervention: false,
+        matchedFrom: "fastpath",
+      };
+    }
+  }
+
   // 1. Email
   if (
     (field.type as string) === "email" ||
@@ -179,9 +276,9 @@ function tryFastPathMatch(field: FormFieldPrompt, attendee: any): FieldResolutio
     }
   }
 
-  // 2. First Name
+  // 2. First Name (only when explicitly requested, e.g. "First Name", "Given Name", or "이름 (First Name)")
   if (
-    (/\b(first\s*name|given\s*name)\b/i.test(combined) || combined === "이름") &&
+    (/\b(first\s*name|given\s*name)\b/i.test(combined) || /이름\s*\(first/i.test(combined)) &&
     !/last\s*name|surname|family|성\b|user\s*name/i.test(combined)
   ) {
     const firstName = attendee.firstName || attendee.name?.split(" ")[0] || "";
@@ -213,10 +310,12 @@ function tryFastPathMatch(field: FormFieldPrompt, attendee: any): FieldResolutio
     }
   }
 
-  // 4. Full Name (avoid matching user name / project name / company name)
+  // 4. Full Name (including Korean single-field "이름" or "성명")
   if (
     (/\b(full\s*name|your\s*name|legal\s*name|성명)\b/i.test(combined) ||
-      (/\bname\b/i.test(combined) && !/user\s*name|handle|nick|project|company|event|organization|rep\b/i.test(combined))) &&
+      combined === "이름" ||
+      /^이름\s*[\*]?$/i.test(field.label.trim()) ||
+      (/\bname\b/i.test(combined) && !/first|given|last|surname|user\s*name|handle|nick|project|company|event|organization|rep\b/i.test(combined))) &&
     !hasOptions
   ) {
     if (attendee.name) {
@@ -256,7 +355,20 @@ function tryFastPathMatch(field: FormFieldPrompt, attendee: any): FieldResolutio
     ) ||
     (/(^|\s)x(\s|$|\*)/i.test(combined) && /handle|username|profile|account/i.test(combined))
   ) {
-    if (attendee.twitter) {
+    if (hasOptions) {
+      const match = findMatchingOption(field.options!, attendee.twitter);
+      if (match) {
+        return {
+          value: match,
+          confidence: 0.98,
+          shouldRemember: false,
+          reasoning: `Fast-path match for Twitter option: "${match}"`,
+          requiresHumanIntervention: false,
+          matchedFrom: "fastpath",
+        };
+      }
+      // If choices exist (e.g. ["Yes", "No"]), let it fall through to option matching
+    } else if (attendee.twitter) {
       return {
         value: attendee.twitter,
         confidence: 0.98,
@@ -270,7 +382,20 @@ function tryFastPathMatch(field: FormFieldPrompt, attendee: any): FieldResolutio
 
   // 7. Telegram Handle
   if (/\b(telegram|tg\s*handle|tg\s*username|tg\b|telegram\s*handle|t\.me)\b/i.test(combined)) {
-    if (attendee.telegram) {
+    if (hasOptions) {
+      const match = findMatchingOption(field.options!, attendee.telegram);
+      if (match) {
+        return {
+          value: match,
+          confidence: 0.98,
+          shouldRemember: false,
+          reasoning: `Fast-path match for Telegram option: "${match}"`,
+          requiresHumanIntervention: false,
+          matchedFrom: "fastpath",
+        };
+      }
+      // If choices exist (e.g. ["Yes", "No"]), let it fall through to option matching
+    } else if (attendee.telegram) {
       return {
         value: attendee.telegram,
         confidence: 0.98,
@@ -284,7 +409,19 @@ function tryFastPathMatch(field: FormFieldPrompt, attendee: any): FieldResolutio
 
   // 8. LinkedIn
   if (/\b(linkedin|linkedin\s*url|linkedin\s*profile|링크드인)\b/i.test(combined)) {
-    if (attendee.linkedin) {
+    if (hasOptions) {
+      const match = findMatchingOption(field.options!, attendee.linkedin);
+      if (match) {
+        return {
+          value: match,
+          confidence: 0.98,
+          shouldRemember: false,
+          reasoning: `Fast-path match for LinkedIn option: "${match}"`,
+          requiresHumanIntervention: false,
+          matchedFrom: "fastpath",
+        };
+      }
+    } else if (attendee.linkedin) {
       return {
         value: attendee.linkedin,
         confidence: 0.98,
@@ -479,26 +616,56 @@ function tryPersonaMatch(
 
   // Discord
   if (/\b(discord|디스코드)\b/i.test(combined) && persona.discord) {
-    return {
-      value: persona.discord,
-      confidence: 0.96,
-      shouldRemember: false,
-      reasoning: "Matched Discord handle from attendee persona",
-      requiresHumanIntervention: false,
-      matchedFrom: "persona",
-    };
+    if (hasOptions) {
+      const match = findMatchingOption(field.options!, persona.discord);
+      if (match) {
+        return {
+          value: match,
+          confidence: 0.96,
+          shouldRemember: false,
+          reasoning: `Matched Discord option "${match}" from attendee persona`,
+          requiresHumanIntervention: false,
+          matchedFrom: "persona",
+        };
+      }
+      // If choices exist (e.g. ["Yes", "No"]), let it fall through to option matching
+    } else {
+      return {
+        value: persona.discord,
+        confidence: 0.96,
+        shouldRemember: false,
+        reasoning: "Matched Discord handle from attendee persona",
+        requiresHumanIntervention: false,
+        matchedFrom: "persona",
+      };
+    }
   }
 
   // GitHub
   if (/\b(github|git\s*hub|깃허브|깃헙)\b/i.test(combined) && persona.github) {
-    return {
-      value: persona.github,
-      confidence: 0.96,
-      shouldRemember: false,
-      reasoning: "Matched GitHub profile from attendee persona",
-      requiresHumanIntervention: false,
-      matchedFrom: "persona",
-    };
+    if (hasOptions) {
+      const match = findMatchingOption(field.options!, persona.github);
+      if (match) {
+        return {
+          value: match,
+          confidence: 0.96,
+          shouldRemember: false,
+          reasoning: `Matched GitHub option "${match}" from attendee persona`,
+          requiresHumanIntervention: false,
+          matchedFrom: "persona",
+        };
+      }
+      // If choices exist (e.g. ["Yes", "No"]), let it fall through to option matching
+    } else {
+      return {
+        value: persona.github,
+        confidence: 0.96,
+        shouldRemember: false,
+        reasoning: "Matched GitHub profile from attendee persona",
+        requiresHumanIntervention: false,
+        matchedFrom: "persona",
+      };
+    }
   }
 
   // T-Shirt Size
@@ -726,9 +893,48 @@ function resolveDeterministicFallback(
         };
       }
     }
+
+    // D. Boolean Yes / No or Confirmation Choice Matching
+    const hasYes = options.find((opt) => /^(yes|예|네|true)$/i.test(opt.trim()));
+    const hasNo = options.find((opt) => /^(no|아니오|아니요|false)$/i.test(opt.trim()));
+    if (hasYes && hasNo) {
+      let isAffirmative = false;
+      if (/telegram|tg\b/i.test(combined) && attendee.telegram) isAffirmative = true;
+      if (/twitter|x\b/i.test(combined) && attendee.twitter) isAffirmative = true;
+      if (/discord/i.test(combined) && persona.discord) isAffirmative = true;
+      if (/github/i.test(combined) && persona.github) isAffirmative = true;
+      if (/linkedin/i.test(combined) && attendee.linkedin) isAffirmative = true;
+      if (/wallet|crypto/i.test(combined) && attendee.wallets) isAffirmative = true;
+
+      const selected = isAffirmative ? hasYes : hasNo;
+      return {
+        value: selected,
+        confidence: 0.95,
+        shouldRemember: true,
+        reasoning: `Matched option "${selected}" based on attendee profile data for "${field.label}"`,
+        requiresHumanIntervention: false,
+        matchedFrom: "llm",
+      };
+    }
   }
 
-  // 2. Open Text / Motivation / Pitch / Essay
+  // 2. Secret passphrases, VIP invite codes, private PINs with no match (Checked before open text / textarea)
+  if (
+    /passphrase|secret|invite\s*code|vip\s*code|passcode|pin\b|private\s*key|referral\s*code|access\s*code|password|초대\s*코드|비밀번호/i.test(
+      combined
+    )
+  ) {
+    return {
+      value: "",
+      confidence: 0.0,
+      shouldRemember: false,
+      reasoning: `Private secret or VIP passphrase requested for "${field.label}", requiring manual input`,
+      requiresHumanIntervention: isRequired,
+      matchedFrom: "unknown",
+    };
+  }
+
+  // 3. Open Text / Motivation / Pitch / Essay
   if (
     /why\s*do\s*you\s*want|why\s*attend|what\s*brings\s*you|what\s*are\s*you\s*building|pitch|project\s*description|introduce\s*yourself|what\s*would\s*you\s*like\s*to\s*learn|지원\s*동기|참여\s*목적/i.test(
       combined
@@ -750,26 +956,10 @@ function resolveDeterministicFallback(
     return {
       value: essay,
       confidence: 0.90,
-      shouldRemember: true,
+      shouldRemember: false, // Do not pollute qaMemory with event-specific essay responses
       reasoning: `Synthesized contextual attendee pitch tailored to event "${eventTitle}"`,
       requiresHumanIntervention: false,
       matchedFrom: "llm",
-    };
-  }
-
-  // 3. Secret passphrases, VIP invite codes, private PINs with no match
-  if (
-    /passphrase|secret|invite\s*code|vip\s*code|passcode|pin\b|private\s*key|referral\s*code|초대\s*코드|비밀번호/i.test(
-      combined
-    )
-  ) {
-    return {
-      value: "",
-      confidence: 0.0,
-      shouldRemember: false,
-      reasoning: `Private secret or VIP passphrase requested for "${field.label}", requiring manual input`,
-      requiresHumanIntervention: isRequired,
-      matchedFrom: "unknown",
     };
   }
 
@@ -803,7 +993,7 @@ async function resolveViaLLM(
   // If asking for secret passwords or VIP codes that are absent from attendee context,
   // don't hallucinate credentials.
   if (
-    /passphrase|secret|invite\s*code|vip\s*code|passcode|pin\b|private\s*key|referral\s*code|초대\s*코드|비밀번호/i.test(
+    /passphrase|secret|invite\s*code|vip\s*code|passcode|pin\b|private\s*key|referral\s*code|access\s*code|password|초대\s*코드|비밀번호/i.test(
       combined
     )
   ) {
@@ -857,18 +1047,40 @@ Respond ONLY with a JSON object in this format:
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        const chosen = parsed.selectedOption || "";
-        const matched = field.options.find((opt) => opt.toLowerCase() === chosen.toLowerCase()) || chosen;
-        const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0.85;
+        const chosen = (parsed.selectedOption || "").trim();
 
-        return {
-          value: matched,
-          confidence,
-          shouldRemember: true,
-          reasoning: parsed.reasoning || `LLM selected option "${matched}"`,
-          requiresHumanIntervention: confidence < 0.70 && isRequired,
-          matchedFrom: "llm",
-        };
+        // Validate that chosen option exists in field.options (exact or fuzzy match)
+        let matched = field.options.find((opt) => opt.toLowerCase() === chosen.toLowerCase());
+        if (!matched) {
+          matched = findMatchingOption(field.options, chosen);
+        }
+
+        if (matched) {
+          const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0.85;
+          return {
+            value: matched,
+            confidence,
+            shouldRemember: true,
+            reasoning: parsed.reasoning || `LLM selected option "${matched}"`,
+            requiresHumanIntervention: confidence < 0.70 && isRequired,
+            matchedFrom: "llm",
+          };
+        } else {
+          // If the LLM returned an option not in field.options, try deterministic fallback
+          const fallback = resolveDeterministicFallback(field, attendee, event, isRequired);
+          if (fallback.value && field.options.includes(fallback.value)) {
+            return fallback;
+          }
+          // If no valid option can be resolved, reject invalid option
+          return {
+            value: "",
+            confidence: 0.30,
+            shouldRemember: false,
+            reasoning: `LLM suggested invalid option "${chosen}" not present in field.options`,
+            requiresHumanIntervention: isRequired,
+            matchedFrom: "unknown",
+          };
+        }
       }
     } else {
       // Open Text / Essay Resolution via LLM
@@ -905,10 +1117,13 @@ Respond ONLY with a JSON object in this format:
         const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0.85;
         const value = parsed.value || "";
 
+        // Event-specific answers should not pollute global qaMemory
+        const isEventSpecific = Boolean(event?.title) || /why\s*do\s*you\s*want|why\s*attend|what\s*brings\s*you/i.test(field.label);
+
         return {
           value,
           confidence,
-          shouldRemember: Boolean(value),
+          shouldRemember: isEventSpecific ? false : Boolean(value),
           reasoning: parsed.reasoning || "LLM generated contextual answer",
           requiresHumanIntervention: confidence < 0.70 && isRequired,
           matchedFrom: value ? "llm" : "unknown",
