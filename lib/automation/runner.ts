@@ -233,26 +233,23 @@ export async function extractDropdownOptions(
     const triggerLoc = typeof trigger === "string" ? page.locator(trigger) : trigger;
     await triggerLoc.scrollIntoViewIfNeeded().catch(() => {});
 
-    const portalSelector =
-      'div[role="listbox"], div[role="dialog"], div[data-radix-popper-content-wrapper], .dropdown-menu, ul[role="listbox"], [role="option"]';
+    const popoverSelector =
+      'div[role="listbox"], [data-radix-popper-content-wrapper], .dropdown-menu, ul[role="listbox"], [data-radix-select-content]';
 
-    let isAlreadyOpen = false;
-    try {
-      const ariaExpanded = await triggerLoc.getAttribute("aria-expanded");
-      const dataState = await triggerLoc.getAttribute("data-state");
-      isAlreadyOpen = ariaExpanded === "true" || dataState === "open";
-    } catch {}
+    const ariaExpanded = await triggerLoc.getAttribute("aria-expanded").catch(() => null);
+    const dataState = await triggerLoc.getAttribute("data-state").catch(() => null);
+    let isAlreadyOpen = ariaExpanded === "true" || dataState === "open";
 
     if (!isAlreadyOpen) {
-      const existingPortal = page.locator(portalSelector).first();
-      if ((await existingPortal.count()) > 0 && (await existingPortal.isVisible().catch(() => false))) {
+      const existingPopover = page.locator(popoverSelector).first();
+      if ((await existingPopover.count()) > 0 && (await existingPopover.isVisible().catch(() => false))) {
         isAlreadyOpen = true;
       }
     }
 
     if (!isAlreadyOpen) {
       await triggerLoc.click({ timeout: 2000 });
-      await page.waitForSelector(portalSelector, { state: "visible", timeout: 1500 }).catch(() => null);
+      await page.waitForSelector(popoverSelector, { state: "visible", timeout: 1500 }).catch(() => null);
     }
 
     const optionLocators = await page
@@ -294,26 +291,23 @@ export async function interactWithDropdown(
     const triggerLoc = typeof trigger === "string" ? page.locator(trigger) : trigger;
     await triggerLoc.scrollIntoViewIfNeeded().catch(() => {});
 
-    const portalSelector =
-      'div[role="listbox"], div[role="dialog"], div[data-radix-popper-content-wrapper], .dropdown-menu, ul[role="listbox"], [role="option"]';
+    const popoverSelector =
+      'div[role="listbox"], [data-radix-popper-content-wrapper], .dropdown-menu, ul[role="listbox"], [data-radix-select-content]';
 
-    let isAlreadyOpen = false;
-    try {
-      const ariaExpanded = await triggerLoc.getAttribute("aria-expanded");
-      const dataState = await triggerLoc.getAttribute("data-state");
-      isAlreadyOpen = ariaExpanded === "true" || dataState === "open";
-    } catch {}
+    const ariaExpanded = await triggerLoc.getAttribute("aria-expanded").catch(() => null);
+    const dataState = await triggerLoc.getAttribute("data-state").catch(() => null);
+    let isAlreadyOpen = ariaExpanded === "true" || dataState === "open";
 
     if (!isAlreadyOpen) {
-      const existingPortal = page.locator(portalSelector).first();
-      if ((await existingPortal.count()) > 0 && (await existingPortal.isVisible().catch(() => false))) {
+      const existingPopover = page.locator(popoverSelector).first();
+      if ((await existingPopover.count()) > 0 && (await existingPopover.isVisible().catch(() => false))) {
         isAlreadyOpen = true;
       }
     }
 
     if (!isAlreadyOpen) {
       await triggerLoc.click({ timeout: 2000 });
-      await page.waitForSelector(portalSelector, { state: "visible", timeout: 1500 }).catch(() => null);
+      await page.waitForSelector(popoverSelector, { state: "visible", timeout: 1500 }).catch(() => null);
     }
 
     // Extract all available option elements
@@ -357,15 +351,25 @@ export async function interactWithDropdown(
         o.valueAttr.trim().toLowerCase() === targetLower
     );
 
-    // Pass 2: Contains match
+    // Pass 2: Forward containment (option text contains target)
     if (!matched) {
       matched = optionsList.find(
         (o) =>
           o.text.trim().toLowerCase().includes(targetLower) ||
-          targetLower.includes(o.text.trim().toLowerCase()) ||
-          o.valueAttr.trim().toLowerCase().includes(targetLower) ||
-          targetLower.includes(o.valueAttr.trim().toLowerCase())
+          o.valueAttr.trim().toLowerCase().includes(targetLower)
       );
+    }
+
+    // Pass 3: Safe reverse containment (target contains option text) ONLY if option text is at least 4 characters
+    // Prevents short 1-3 letter options like "IT", "In", "VC", "No" from falsely matching "Investor", "Community", etc.
+    if (!matched) {
+      matched = optionsList.find((o) => {
+        const oText = o.text.trim().toLowerCase();
+        const oVal = o.valueAttr.trim().toLowerCase();
+        const textMatches = oText.length >= 4 && targetLower.includes(oText);
+        const valMatches = oVal.length >= 4 && targetLower.includes(oVal);
+        return textMatches || valMatches;
+      });
     }
 
     if (matched) {
@@ -375,7 +379,7 @@ export async function interactWithDropdown(
 
       // Check if popup remains open; if so, dismiss
       const stillOpen = await page
-        .locator('div[role="listbox"]:visible, div[data-radix-popper-content-wrapper]:visible, .dropdown-menu:visible')
+        .locator('div[role="listbox"]:visible, [data-radix-popper-content-wrapper]:visible, .dropdown-menu:visible, [data-radix-select-content]:visible')
         .first()
         .isVisible()
         .catch(() => false);
@@ -462,13 +466,17 @@ export async function fillFormFields(
         log(`🎯 Resolved combobox [${label}]: "${resolution.value}" (confidence: ${resolution.confidence})`, "info");
       }
 
+      let selected = false;
       if (resolution.value) {
-        await interactWithDropdown(page, trigger, resolution.value);
+        selected = await interactWithDropdown(page, trigger, resolution.value);
+        if (!selected) {
+          log(`⚠️ Could not find matching option for "${resolution.value}" in dropdown "${label}"`, "warn");
+        }
       } else {
         await page.keyboard.press("Escape").catch(() => {});
       }
 
-      if (resolution.shouldRemember && resolution.value && person?.id && label) {
+      if (selected && resolution.shouldRemember && resolution.value && person?.id && label) {
         try {
           await saveAnswerToMemory(person.id, label, resolution.value);
         } catch (memErr: any) {

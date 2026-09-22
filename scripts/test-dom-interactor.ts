@@ -16,11 +16,20 @@ const HTML_TEST_PAGE = `<!DOCTYPE html>
   <meta charset="UTF-8">
   <title>Luma Registration Form - Collectible Con Korea 2026</title>
   <style>
-    body { font-family: sans-serif; padding: 20px; }
+    body { font-family: sans-serif; padding: 20px; background: #f8fafc; }
+    .luma-modal-dialog {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 24px;
+    }
     .form-item { margin-bottom: 20px; display: flex; flex-direction: column; gap: 6px; }
     .radix-combobox-trigger {
       padding: 8px 12px;
-      border: 1px solid #ccc;
+      border: 1px solid #cbd5e1;
       border-radius: 6px;
       background: #fff;
       display: inline-flex;
@@ -32,10 +41,10 @@ const HTML_TEST_PAGE = `<!DOCTYPE html>
     .radix-portal {
       position: absolute;
       background: white;
-      border: 1px solid #ccc;
+      border: 1px solid #cbd5e1;
       border-radius: 6px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-      z-index: 1000;
+      box-shadow: 0 10px 20px rgba(0,0,0,0.15);
+      z-index: 9999;
       min-width: 220px;
     }
     .radix-option {
@@ -43,82 +52,87 @@ const HTML_TEST_PAGE = `<!DOCTYPE html>
       cursor: pointer;
     }
     .radix-option:hover {
-      background: #f0f0f0;
+      background: #f1f5f9;
     }
     input[type="text"] {
       padding: 8px 12px;
-      border: 1px solid #ccc;
+      border: 1px solid #cbd5e1;
       border-radius: 6px;
       max-width: 320px;
     }
   </style>
 </head>
 <body>
-  <h2>Registration for Collectible Con Korea 2026</h2>
-  <form id="registration-form" onsubmit="return false;">
-    <!-- 1. Realistic Luma Radix UI Role Combobox -->
-    <div class="form-item">
-      <label id="role-label" for="role-trigger">What best describes your role? *</label>
-      <button
-        id="role-trigger"
-        type="button"
-        role="combobox"
-        aria-expanded="false"
-        aria-haspopup="listbox"
-        aria-labelledby="role-label"
-        data-state="closed"
-        class="radix-combobox-trigger"
-      >
-        <span class="trigger-label">Select your role...</span>
-        <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4" stroke="currentColor" fill="none"/></svg>
-      </button>
+  <!-- Luma Modal Dialog enclosing the registration form -->
+  <div role="dialog" aria-modal="true" class="luma-modal-dialog" id="registration-dialog">
+    <div class="modal-header">
+      <h2>Registration for Collectible Con Korea 2026</h2>
     </div>
+    <form id="registration-form" onsubmit="return false;">
+      <!-- 1. Realistic Luma Radix UI Role Combobox -->
+      <div class="form-item">
+        <label id="role-label" for="role-trigger">What best describes your role? *</label>
+        <button
+          id="role-trigger"
+          type="button"
+          role="combobox"
+          aria-expanded="false"
+          aria-haspopup="listbox"
+          aria-labelledby="role-label"
+          data-state="closed"
+          class="radix-combobox-trigger"
+        >
+          <span class="trigger-label">Select your role...</span>
+          <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4" stroke="currentColor" fill="none"/></svg>
+        </button>
+      </div>
 
-    <!-- 2. Korean Age Group Dropdown -->
-    <div class="form-item">
-      <label id="age-label" for="age-trigger">연령대를 선택해주세요 (필수)</label>
-      <button
-        id="age-trigger"
-        type="button"
-        role="combobox"
-        aria-expanded="false"
-        aria-haspopup="listbox"
-        aria-labelledby="age-label"
-        data-state="closed"
-        class="radix-combobox-trigger"
-      >
-        <span class="trigger-label">연령대 선택...</span>
-        <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4" stroke="currentColor" fill="none"/></svg>
-      </button>
-    </div>
+      <!-- 2. Korean Age Group Dropdown -->
+      <div class="form-item">
+        <label id="age-label" for="age-trigger">연령대를 선택해주세요 (필수)</label>
+        <button
+          id="age-trigger"
+          type="button"
+          role="combobox"
+          aria-expanded="false"
+          aria-haspopup="listbox"
+          aria-labelledby="age-label"
+          data-state="closed"
+          class="radix-combobox-trigger"
+        >
+          <span class="trigger-label">연령대 선택...</span>
+          <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4" stroke="currentColor" fill="none"/></svg>
+        </button>
+      </div>
 
-    <!-- 3. Discord Handle Text Input -->
-    <div class="form-item">
-      <label for="discord-input">What is your Discord handle? *</label>
-      <input
-        id="discord-input"
-        type="text"
-        name="discord"
-        placeholder="e.g. @username"
-        required
-      />
-    </div>
-
-    <!-- 4. Terms Agreement Checkbox -->
-    <div class="form-item">
-      <label for="terms-checkbox" style="display:flex;align-items:center;gap:8px;">
+      <!-- 3. Discord Handle Text Input -->
+      <div class="form-item">
+        <label for="discord-input">What is your Discord handle? *</label>
         <input
-          id="terms-checkbox"
-          type="checkbox"
-          name="terms"
+          id="discord-input"
+          type="text"
+          name="discord"
+          placeholder="e.g. @username"
           required
         />
-        I agree to the Terms of Service and Privacy Policy *
-      </label>
-    </div>
+      </div>
 
-    <button type="submit" id="submit-btn">Submit Registration</button>
-  </form>
+      <!-- 4. Terms Agreement Checkbox -->
+      <div class="form-item">
+        <label for="terms-checkbox" style="display:flex;align-items:center;gap:8px;">
+          <input
+            id="terms-checkbox"
+            type="checkbox"
+            name="terms"
+            required
+          />
+          I agree to the Terms of Service and Privacy Policy *
+        </label>
+      </div>
+
+      <button type="submit" id="submit-btn">Submit Registration</button>
+    </form>
+  </div>
 
   <script>
     function setupRadixCombobox(triggerId, options) {
@@ -174,11 +188,13 @@ const HTML_TEST_PAGE = `<!DOCTYPE html>
       const existing = document.querySelector('[data-radix-popper-content-wrapper]');
       if (existing) {
         existing.remove();
+        document.querySelectorAll('.radix-combobox-trigger').forEach(tr => {
+          tr.setAttribute('data-state', 'closed');
+          tr.setAttribute('aria-expanded', 'false');
+        });
+        return true;
       }
-      document.querySelectorAll('.radix-combobox-trigger').forEach(tr => {
-        tr.setAttribute('data-state', 'closed');
-        tr.setAttribute('aria-expanded', 'false');
-      });
+      return false;
     }
 
     document.addEventListener('click', (e) => {
@@ -189,11 +205,16 @@ const HTML_TEST_PAGE = `<!DOCTYPE html>
 
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
-        closePortal();
+        const portalClosed = closePortal();
+        // If Escape was pressed when NO dropdown portal was open, Luma closes the whole modal dialog!
+        if (!portalClosed) {
+          const modal = document.getElementById('registration-dialog');
+          if (modal) modal.style.display = 'none';
+        }
       }
     });
 
-    setupRadixCombobox('role-trigger', ["Builder", "Investor", "Media", "Student"]);
+    setupRadixCombobox('role-trigger', ["IT", "In", "Builder", "Investor", "Media", "Student"]);
     setupRadixCombobox('age-trigger', ["10대", "20대", "30대", "40대 이상"]);
   </script>
 </body>
@@ -259,43 +280,50 @@ async function runTests() {
   await page.setContent(HTML_TEST_PAGE);
 
   // -------------------------------------------------------------
-  // Test A: Direct interactWithDropdown verification
+  // Test A: Standalone interactWithDropdown & Short Option Matching Protection
   // -------------------------------------------------------------
-  console.log("🧪 --- Test A: Standalone interactWithDropdown helper verification ---");
+  console.log("🧪 --- Test A: Standalone interactWithDropdown & Bidirectional Matching Protection ---");
   const roleTrigger = page.locator("#role-trigger");
 
   // Test extracting options
   const extractedOptions = await extractDropdownOptions(page, roleTrigger);
   console.log("Extracted role options:", extractedOptions);
   if (
+    !extractedOptions.includes("IT") ||
+    !extractedOptions.includes("In") ||
     !extractedOptions.includes("Builder") ||
-    !extractedOptions.includes("Investor") ||
-    !extractedOptions.includes("Media") ||
-    !extractedOptions.includes("Student")
+    !extractedOptions.includes("Investor")
   ) {
-    throw new Error(`Test A Failed: Expected full option list, got: ${JSON.stringify(extractedOptions)}`);
+    throw new Error(`Test A Failed: Expected full option list including short codes, got: ${JSON.stringify(extractedOptions)}`);
   }
-  console.log("✅ extractDropdownOptions extracted all 4 portal options.");
+  console.log("✅ extractDropdownOptions extracted all portal options.");
 
-  // Test direct interaction
+  // Test direct interaction with "Investor" - must NOT accidentally match short option "In" or "IT"!
   const selectRes = await interactWithDropdown(page, roleTrigger, "Investor");
   if (!selectRes) {
     throw new Error("Test A Failed: interactWithDropdown returned false for valid option 'Investor'");
   }
   const selectedAttr = await roleTrigger.getAttribute("data-selected");
   const selectedText = await roleTrigger.innerText();
-  if (selectedAttr !== "Investor" && !selectedText.includes("Investor")) {
-    throw new Error(`Test A Failed: Role trigger does not show 'Investor' (attr: ${selectedAttr}, text: ${selectedText})`);
+  if (selectedAttr !== "Investor" || !selectedText.includes("Investor")) {
+    throw new Error(`Test A Failed: Short-string collision! Expected 'Investor', but got attr='${selectedAttr}', text='${selectedText}'`);
   }
-  console.log("✅ interactWithDropdown successfully selected 'Investor' directly.\n");
+  console.log("✅ Bidirectional matching protection verified: selected 'Investor' without false positive on short options ('In', 'IT').");
+
+  // Verify modal dialog was not closed
+  const isModalStillOpen = await page.locator("#registration-dialog").isVisible();
+  if (!isModalStillOpen) {
+    throw new Error("Test A Failed: Modal dialog was closed during dropdown interaction!");
+  }
+  console.log("✅ Modal dialog remained open and undisturbed.\n");
 
   // Reset form page for clean full integration test
   await page.setContent(HTML_TEST_PAGE);
 
   // -------------------------------------------------------------
-  // Test B: Full fillFormFields Integration on Complex Radix Form
+  // Test B: Full fillFormFields Integration on Modal Dialog Form
   // -------------------------------------------------------------
-  console.log("🧪 --- Test B: Full fillFormFields Execution with AI Field Resolver ---");
+  console.log("🧪 --- Test B: Full fillFormFields Execution inside Modal Dialog ---");
   await fillFormFields(
     page,
     attendee,
@@ -307,6 +335,14 @@ async function runTests() {
   );
 
   console.log("\n🔍 --- Running Assertions ---");
+
+  // Assertion 0: Modal Dialog remains open
+  const isDialogVisible = await page.locator("#registration-dialog").isVisible();
+  console.log(`0. Registration modal dialog visible: ${isDialogVisible}`);
+  if (!isDialogVisible) {
+    throw new Error("Assertion 0 Failed: Registration modal dialog was closed unexpectedly during form filling!");
+  }
+  console.log("   ✅ Assertion 0 Passed: Modal dialog is open and intact.");
 
   // Assertion 1: Discord is filled with @aswin402
   const discordVal = await page.locator("#discord-input").inputValue();
@@ -342,15 +378,18 @@ async function runTests() {
   }
   console.log("   ✅ Assertion 4 Passed: Terms agreement checkbox is checked.");
 
-  // Assertion 5: Verify persistent memory persistence for resolved dropdown questions
+  // Assertion 5: Verify persistent memory persistence for successfully resolved dropdown questions
   const reloadedAttendee = await prisma.attendee.findUnique({ where: { id: attendee.id } });
   const memory = getQAMemory(reloadedAttendee);
   console.log("5. Persistent Learned Memory store keys:", Object.keys(memory));
+  if (!memory["what is your discord"] || !memory["what best describes your role"] || !memory["연령대를 선택해주세요"]) {
+    throw new Error("Assertion 5 Failed: Expected answered dropdown questions to be persisted in qaMemory");
+  }
   console.log("   ✅ Assertion 5 Passed: Learned Q&A Memory successfully verified in database.");
 
   await browser.close();
 
-  console.log("\n🎉 ALL ASSERTIONS PASSED! Task 3 Universal Radix Popover & DOM Interactor verified.");
+  console.log("\n🎉 ALL ASSERTIONS PASSED! Task 3 fixes fully verified.");
 }
 
 runTests().catch((err) => {
