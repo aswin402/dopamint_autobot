@@ -44,6 +44,8 @@ import {
   Filter,
   CheckSquare,
   ChevronDown,
+  ChevronUp,
+  Brain,
   Key,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -210,6 +212,19 @@ export interface AttendeeProfile {
   role?: string;
   message?: string;
   pitch?: string;
+  discord?: string;
+  github?: string;
+  primaryTrack?: "Developer" | "Founder" | "Investor" | "Community" | "Student" | "Other" | string;
+  skills?: string[];
+  interests?: string[];
+  tshirtSize?: "XS" | "S" | "M" | "L" | "XL" | "2XL" | string;
+  diet?: string;
+  gender?: string;
+  ageGroup?: string;
+  metadata?: any;
+  qaMemory?: Record<string, string>;
+  lumaSessionKey?: string | null;
+  proxyUrl?: string | null;
   [key: string]: any;
 }
 
@@ -285,6 +300,9 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [editingProfileIndex, setEditingProfileIndex] = useState<number | null>(null);
   const [syncProfileToDatabase, setSyncProfileToDatabase] = useState(false);
+  const [showQaMemoryAccordion, setShowQaMemoryAccordion] = useState(false);
+  const [newQaQuestion, setNewQaQuestion] = useState("");
+  const [newQaAnswer, setNewQaAnswer] = useState("");
   const [profileForm, setProfileForm] = useState<AttendeeProfile>({
     name: "",
     email: "",
@@ -292,6 +310,13 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
     company: "",
     role: "",
     message: "",
+    discord: "",
+    github: "",
+    primaryTrack: "Developer",
+    tshirtSize: "L",
+    gender: "",
+    ageGroup: "",
+    qaMemory: {},
   });
 
   // URL Management State (Add, Edit, Bulk Paste)
@@ -427,15 +452,36 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
       company: "",
       role: "",
       message: "",
+      discord: "",
+      github: "",
+      primaryTrack: "Developer",
+      tshirtSize: "L",
+      gender: "",
+      ageGroup: "",
+      qaMemory: {},
       lumaSessionKey: "",
       proxyUrl: "",
     });
+    setShowQaMemoryAccordion(false);
+    setNewQaQuestion("");
+    setNewQaAnswer("");
     setSyncProfileToDatabase(false);
     setShowProfileModal(true);
   };
 
   const handleOpenEditProfile = (profile: AttendeeProfile, index: number) => {
     setEditingProfileIndex(index);
+    let meta: any = {};
+    if (typeof profile.metadata === "string" && profile.metadata.trim()) {
+      try {
+        meta = JSON.parse(profile.metadata);
+      } catch {}
+    } else if (profile.metadata && typeof profile.metadata === "object") {
+      meta = profile.metadata;
+    }
+    const persona = meta.persona || {};
+    const qaMemory = profile.qaMemory || meta.qaMemory || {};
+
     setProfileForm({
       id: profile.id,
       name: profile.name || "",
@@ -443,12 +489,45 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
       phone: profile.phone || "",
       company: profile.company || "",
       role: profile.role || "",
-      message: profile.message || profile.pitch || "",
+      message: profile.message || profile.pitch || persona.bio || "",
+      discord: profile.discord || persona.discord || "",
+      github: profile.github || persona.github || "",
+      primaryTrack: profile.primaryTrack || persona.primaryTrack || "Developer",
+      tshirtSize: profile.tshirtSize || persona.tshirtSize || "L",
+      gender: profile.gender || persona.gender || "",
+      ageGroup: profile.ageGroup || persona.ageGroup || "",
+      qaMemory: { ...qaMemory },
+      metadata: profile.metadata,
       lumaSessionKey: profile.lumaSessionKey || "",
       proxyUrl: profile.proxyUrl || "",
     });
+    setShowQaMemoryAccordion(Object.keys(qaMemory).length > 0);
+    setNewQaQuestion("");
+    setNewQaAnswer("");
     setSyncProfileToDatabase(Boolean(profile.id && !profile.id.startsWith("local-")));
     setShowProfileModal(true);
+  };
+
+  const handleRemoveQaMemoryKey = (keyToRemove: string) => {
+    setProfileForm((prev) => {
+      const updated = { ...(prev.qaMemory || {}) };
+      delete updated[keyToRemove];
+      return { ...prev, qaMemory: updated };
+    });
+  };
+
+  const handleAddQaMemoryPair = () => {
+    if (!newQaQuestion.trim() || !newQaAnswer.trim()) return;
+    const key = newQaQuestion.trim().toLowerCase().replace(/[*?:!#]/g, "").replace(/\s+/g, " ");
+    setProfileForm((prev) => ({
+      ...prev,
+      qaMemory: {
+        ...(prev.qaMemory || {}),
+        [key]: newQaAnswer.trim(),
+      },
+    }));
+    setNewQaQuestion("");
+    setNewQaAnswer("");
   };
 
   const handleSaveProfile = async () => {
@@ -465,41 +544,52 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
       company: profileForm.company?.trim() || "",
       role: profileForm.role?.trim() || "",
       message: profileForm.message?.trim() || "",
+      discord: profileForm.discord?.trim() || "",
+      github: profileForm.github?.trim() || "",
+      primaryTrack: profileForm.primaryTrack || "Developer",
+      tshirtSize: profileForm.tshirtSize || "",
+      gender: profileForm.gender?.trim() || "",
+      ageGroup: profileForm.ageGroup?.trim() || "",
+      qaMemory: profileForm.qaMemory || {},
       lumaSessionKey: profileForm.lumaSessionKey?.trim() || null,
       proxyUrl: profileForm.proxyUrl?.trim() || null,
     };
 
     if (syncProfileToDatabase) {
       try {
+        const body = {
+          name: payload.name,
+          email: payload.email,
+          phone: payload.phone,
+          company: payload.company,
+          role: payload.role,
+          pitch: payload.message,
+          gender: payload.gender,
+          lumaSessionKey: payload.lumaSessionKey,
+          proxyUrl: payload.proxyUrl,
+          persona: {
+            discord: payload.discord,
+            github: payload.github,
+            primaryTrack: payload.primaryTrack,
+            tshirtSize: payload.tshirtSize,
+            gender: payload.gender,
+            ageGroup: payload.ageGroup,
+            bio: payload.message,
+          },
+          qaMemory: payload.qaMemory,
+        };
+
         if (payload.id && !payload.id.startsWith("local-")) {
           await fetch(`/api/attendees/${payload.id}`, {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: payload.name,
-              email: payload.email,
-              phone: payload.phone,
-              company: payload.company,
-              role: payload.role,
-              pitch: payload.message,
-              lumaSessionKey: payload.lumaSessionKey,
-              proxyUrl: payload.proxyUrl,
-            }),
+            body: JSON.stringify(body),
           });
         } else {
           const res = await fetch("/api/attendees", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: payload.name,
-              email: payload.email,
-              phone: payload.phone,
-              company: payload.company,
-              role: payload.role,
-              pitch: payload.message,
-              lumaSessionKey: payload.lumaSessionKey,
-              proxyUrl: payload.proxyUrl,
-            }),
+            body: JSON.stringify(body),
           });
           const created = await res.json();
           if (created.attendee?.id) {
@@ -547,17 +637,42 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   const handleImportAllRoster = () => {
     if (attendees.length === 0) return;
     const existingEmails = new Set(matrixProfiles.map((p) => p.email.toLowerCase()));
+    const parseMeta = (metaStr: any) => {
+      if (!metaStr) return {};
+      if (typeof metaStr === "object") return metaStr;
+      try {
+        return JSON.parse(metaStr);
+      } catch {
+        return {};
+      }
+    };
+
     const newItems: AttendeeProfile[] = attendees
       .filter((a) => !existingEmails.has(a.email.toLowerCase()))
-      .map((a) => ({
-        id: a.id,
-        name: a.name,
-        email: a.email,
-        phone: a.phone || "",
-        company: a.company || "",
-        role: a.role || "",
-        message: a.pitch || "",
-      }));
+      .map((a) => {
+        const meta = parseMeta(a.metadata);
+        const persona = meta.persona || {};
+        return {
+          id: a.id,
+          name: a.name,
+          email: a.email,
+          phone: a.phone || "",
+          company: a.company || "",
+          role: a.role || "",
+          message: a.pitch || persona.bio || "",
+          pitch: a.pitch,
+          gender: a.gender || persona.gender || "",
+          discord: persona.discord || "",
+          github: persona.github || "",
+          primaryTrack: persona.primaryTrack || "Developer",
+          tshirtSize: persona.tshirtSize || "",
+          ageGroup: persona.ageGroup || "",
+          qaMemory: meta.qaMemory || {},
+          metadata: a.metadata,
+          lumaSessionKey: a.lumaSessionKey || null,
+          proxyUrl: a.proxyUrl || null,
+        };
+      });
 
     setMatrixProfiles((prev) => [...prev, ...newItems]);
   };
@@ -568,6 +683,15 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
     const a = attendees.find((item) => item.id === id);
     if (a) {
       if (!matrixProfiles.some((p) => p.email.toLowerCase() === a.email.toLowerCase())) {
+        let meta: any = {};
+        if (typeof a.metadata === "string" && a.metadata.trim()) {
+          try {
+            meta = JSON.parse(a.metadata);
+          } catch {}
+        } else if (a.metadata && typeof a.metadata === "object") {
+          meta = a.metadata;
+        }
+        const persona = meta.persona || {};
         setMatrixProfiles((prev) => [
           ...prev,
           {
@@ -577,7 +701,18 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
             phone: a.phone || "",
             company: a.company || "",
             role: a.role || "",
-            message: a.pitch || "",
+            message: a.pitch || persona.bio || "",
+            pitch: a.pitch,
+            gender: a.gender || persona.gender || "",
+            discord: persona.discord || "",
+            github: persona.github || "",
+            primaryTrack: persona.primaryTrack || "Developer",
+            tshirtSize: persona.tshirtSize || "",
+            ageGroup: persona.ageGroup || "",
+            qaMemory: meta.qaMemory || {},
+            metadata: a.metadata,
+            lumaSessionKey: a.lumaSessionKey || null,
+            proxyUrl: a.proxyUrl || null,
           },
         ]);
       }
@@ -2392,8 +2527,8 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
         {/* ================================================================== */}
         {showProfileModal && (
           <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-card border border-border rounded-2xl max-w-md w-full p-6 space-y-4 shadow-xl animate-in fade-in zoom-in-95 duration-150">
-              <div className="flex items-center justify-between pb-2 border-b border-border">
+            <div className="bg-card border border-border rounded-2xl max-w-lg w-full max-h-[92vh] flex flex-col p-6 shadow-xl animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between pb-3 border-b border-border shrink-0">
                 <div className="flex items-center gap-2">
                   <div className="w-7 h-7 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
                     <User className="w-3.5 h-3.5" />
@@ -2413,7 +2548,8 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 </button>
               </div>
 
-              <div className="space-y-3 text-xs">
+              <div className="space-y-3.5 text-xs overflow-y-auto py-2 pr-1 flex-1">
+                {/* Basic Info */}
                 <div>
                   <label className="font-semibold text-foreground">Full Name *</label>
                   <input
@@ -2472,6 +2608,88 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                   </div>
                 </div>
 
+                {/* Persona & Demographics */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="font-semibold text-foreground">Primary Track / Focus</label>
+                    <select
+                      value={profileForm.primaryTrack || "Developer"}
+                      onChange={(e) => setProfileForm({ ...profileForm, primaryTrack: e.target.value })}
+                      className="w-full mt-1 bg-background border border-border rounded-xl px-3 py-2 text-foreground outline-none focus:border-primary text-xs"
+                    >
+                      <option value="Developer">Developer</option>
+                      <option value="Founder">Founder</option>
+                      <option value="Investor">Investor</option>
+                      <option value="Community">Community</option>
+                      <option value="Student">Student</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="font-semibold text-foreground">T-Shirt Size</label>
+                    <select
+                      value={profileForm.tshirtSize || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, tshirtSize: e.target.value })}
+                      className="w-full mt-1 bg-background border border-border rounded-xl px-3 py-2 text-foreground outline-none focus:border-primary text-xs"
+                    >
+                      <option value="">Select size</option>
+                      <option value="XS">XS</option>
+                      <option value="S">S</option>
+                      <option value="M">M</option>
+                      <option value="L">L</option>
+                      <option value="XL">XL</option>
+                      <option value="2XL">2XL</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="font-semibold text-foreground">Gender</label>
+                    <input
+                      type="text"
+                      value={profileForm.gender || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, gender: e.target.value })}
+                      placeholder="e.g. Male / 남성, Female / 여성"
+                      className="w-full mt-1 bg-background border border-border rounded-xl px-3 py-2 text-foreground outline-none focus:border-primary text-xs"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-semibold text-foreground">Age Bracket</label>
+                    <input
+                      type="text"
+                      value={profileForm.ageGroup || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, ageGroup: e.target.value })}
+                      placeholder="e.g. 20대 (20s), 30대 (30s)"
+                      className="w-full mt-1 bg-background border border-border rounded-xl px-3 py-2 text-foreground outline-none focus:border-primary text-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Social Profiles */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="font-semibold text-foreground">Discord Handle</label>
+                    <input
+                      type="text"
+                      value={profileForm.discord || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, discord: e.target.value })}
+                      placeholder="e.g. @alexmorgan or alex#1234"
+                      className="w-full mt-1 bg-background border border-border rounded-xl px-3 py-2 text-foreground outline-none focus:border-primary text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-semibold text-foreground">GitHub Profile</label>
+                    <input
+                      type="text"
+                      value={profileForm.github || ""}
+                      onChange={(e) => setProfileForm({ ...profileForm, github: e.target.value })}
+                      placeholder="e.g. https://github.com/alex"
+                      className="w-full mt-1 bg-background border border-border rounded-xl px-3 py-2 text-foreground outline-none focus:border-primary text-xs font-mono"
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label className="font-semibold text-foreground">Custom Message / Bio / Pitch</label>
                   <textarea
@@ -2481,6 +2699,102 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                     placeholder="Custom response text to submit in feedback or question fields..."
                     className="w-full mt-1 bg-background border border-border rounded-xl p-2.5 text-foreground outline-none focus:border-primary resize-none text-xs"
                   />
+                </div>
+
+                {/* Expandable Learned Q&A Memory Viewer */}
+                <div className="pt-2 border-t border-border/60 space-y-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowQaMemoryAccordion(!showQaMemoryAccordion)}
+                    className="w-full flex items-center justify-between p-2.5 rounded-xl bg-muted/40 hover:bg-muted/70 transition-colors cursor-pointer text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Brain className="w-3.5 h-3.5 text-primary" />
+                      <span className="font-semibold text-foreground text-xs">
+                        Learned Q&A Memory
+                      </span>
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
+                        {Object.keys(profileForm.qaMemory || {}).length} pairs
+                      </Badge>
+                    </div>
+                    {showQaMemoryAccordion ? (
+                      <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                    )}
+                  </button>
+
+                  {showQaMemoryAccordion && (
+                    <div className="p-3 rounded-xl border border-border/60 bg-background/60 space-y-2.5">
+                      <p className="text-[10px] text-muted-foreground">
+                        Memory bank mapping custom form questions to verified persona answers. The agent auto-learns answers when resolving form questions or human interventions.
+                      </p>
+
+                      {Object.keys(profileForm.qaMemory || {}).length === 0 ? (
+                        <div className="p-3 text-center rounded-lg border border-dashed border-border/60 text-muted-foreground text-[11px]">
+                          No learned Q&A pairs recorded yet.
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-44 overflow-y-auto pr-1">
+                          {Object.entries(profileForm.qaMemory || {}).map(([questionKey, answerVal]) => (
+                            <div
+                              key={questionKey}
+                              className="flex items-center justify-between gap-2 p-2 rounded-lg bg-card border border-border/70 text-xs"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="text-[11px] font-mono font-medium text-foreground truncate" title={questionKey}>
+                                  Q: {questionKey}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground truncate" title={String(answerVal)}>
+                                  A: <span className="text-primary font-semibold">{String(answerVal)}</span>
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveQaMemoryKey(questionKey)}
+                                className="p-1 rounded-md text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer shrink-0"
+                                title="Remove learned answer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Manual Teach New Q&A */}
+                      <div className="pt-2 border-t border-border/40 space-y-1.5">
+                        <span className="text-[10px] font-medium text-muted-foreground uppercase">
+                          Teach New Question / Answer
+                        </span>
+                        <div className="flex flex-col sm:flex-row gap-1.5">
+                          <input
+                            type="text"
+                            placeholder="Question (e.g. what is your discord)"
+                            value={newQaQuestion}
+                            onChange={(e) => setNewQaQuestion(e.target.value)}
+                            className="flex-1 bg-background border border-border rounded-lg px-2.5 py-1 text-[11px] outline-none focus:border-primary font-mono"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Answer (e.g. @aswin402)"
+                            value={newQaAnswer}
+                            onChange={(e) => setNewQaAnswer(e.target.value)}
+                            className="flex-1 bg-background border border-border rounded-lg px-2.5 py-1 text-[11px] outline-none focus:border-primary"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAddQaMemoryPair}
+                            disabled={!newQaQuestion.trim() || !newQaAnswer.trim()}
+                            className="px-2.5 py-1 rounded-lg bg-secondary text-secondary-foreground text-[11px] font-semibold hover:bg-secondary/80 disabled:opacity-40 cursor-pointer shrink-0 flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Add</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="pt-2 border-t border-border/60 space-y-2">
@@ -2533,7 +2847,7 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
                 </label>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-border shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowProfileModal(false)}

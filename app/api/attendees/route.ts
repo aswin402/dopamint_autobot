@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { forwardToHono } from "@/lib/backend-proxy";
 import { getCurrentUser } from "@/lib/current-user";
+import { buildAttendeeMetadata } from "@/lib/automation/persona";
 
 export async function GET() {
   try {
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
       website = "",
       wallets = "",
       pitch = "",
+      gender = "",
       country = "South Korea",
       lumaSessionKey = null,
       proxyUrl = null,
@@ -57,6 +59,10 @@ export async function POST(req: NextRequest) {
     if (!name || !email) {
       return NextResponse.json({ error: "Name and Email are required." }, { status: 400 });
     }
+
+    const existing = await prisma.attendee.findUnique({ where: { email } });
+    const metadata = buildAttendeeMetadata(existing?.metadata, body);
+    const finalGender = gender || body.persona?.gender || existing?.gender || null;
 
     const attendee = await prisma.attendee.upsert({
       where: { email },
@@ -72,9 +78,11 @@ export async function POST(req: NextRequest) {
         website,
         wallets,
         pitch,
+        gender: finalGender,
         country,
         lumaSessionKey,
         proxyUrl,
+        metadata,
         ...(user ? { userId: user.id } : {}),
       },
       update: {
@@ -88,9 +96,11 @@ export async function POST(req: NextRequest) {
         website,
         wallets,
         pitch,
+        gender: finalGender,
         country,
-        lumaSessionKey,
-        proxyUrl,
+        ...(lumaSessionKey !== undefined ? { lumaSessionKey } : {}),
+        ...(proxyUrl !== undefined ? { proxyUrl } : {}),
+        metadata,
       },
     });
 

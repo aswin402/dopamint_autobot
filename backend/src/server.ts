@@ -15,6 +15,7 @@ import { streamAgentChat } from "../../lib/ai/minimax";
 import { parseDocument } from "../../lib/parsers";
 import automationRunner, { DEFAULT_PACING } from "../../lib/automation/runner";
 import { handleAgentChat } from "../../lib/ai/agent-chat";
+import { buildAttendeeMetadata } from "../../lib/automation/persona";
 
 const app = new Hono();
 const PORT = Number(process.env.BACKEND_PORT || process.env.PORT || 4000);
@@ -210,14 +211,51 @@ app.get("/api/attendees", async (c) => {
 app.post("/api/attendees", async (c) => {
   try {
     const body = await c.req.json();
-    const { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch, lumaSessionKey, proxyUrl } = body;
+    const { name, email, role = "Team Member", company = "Dopamint", phone = "", telegram = "", twitter = "", linkedin = "", website = "", wallets = "", pitch = "", gender = "", country = "South Korea", lumaSessionKey = null, proxyUrl = null } = body;
     if (!name || !email) {
       return c.json({ error: "Name and email are required" }, 400);
     }
+    const existing = await prisma.attendee.findUnique({ where: { email } });
+    const metadata = buildAttendeeMetadata(existing?.metadata, body);
+    const finalGender = gender || body.persona?.gender || existing?.gender || null;
+
     const attendee = await prisma.attendee.upsert({
       where: { email },
-      update: { name, role, company, phone, telegram, twitter, linkedin, wallets, pitch, lumaSessionKey, proxyUrl },
-      create: { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch, lumaSessionKey, proxyUrl },
+      update: {
+        name,
+        role,
+        company,
+        phone,
+        telegram,
+        twitter,
+        linkedin,
+        website,
+        wallets,
+        pitch,
+        gender: finalGender,
+        country,
+        ...(lumaSessionKey !== undefined ? { lumaSessionKey } : {}),
+        ...(proxyUrl !== undefined ? { proxyUrl } : {}),
+        metadata,
+      },
+      create: {
+        name,
+        email,
+        role,
+        company,
+        phone,
+        telegram,
+        twitter,
+        linkedin,
+        website,
+        wallets,
+        pitch,
+        gender: finalGender,
+        country,
+        lumaSessionKey,
+        proxyUrl,
+        metadata,
+      },
     });
     return c.json({ success: true, attendee }, 201);
   } catch (err: any) {
@@ -229,11 +267,32 @@ app.put("/api/attendees/:id", async (c) => {
   try {
     const id = c.req.param("id");
     const body = await c.req.json();
-    const { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch, lumaSessionKey, proxyUrl } = body;
+    const { name, email, role, company, phone, telegram, twitter, linkedin, website, wallets, pitch, gender, country, lumaSessionKey, proxyUrl } = body;
+
+    const existing = await prisma.attendee.findUnique({ where: { id } });
+    const metadata = buildAttendeeMetadata(existing?.metadata, body);
+    const finalGender = gender !== undefined ? gender : (body.persona?.gender ?? existing?.gender ?? null);
 
     const attendee = await prisma.attendee.update({
       where: { id },
-      data: { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch, lumaSessionKey, proxyUrl },
+      data: {
+        name,
+        email,
+        role,
+        company,
+        phone,
+        telegram,
+        twitter,
+        linkedin,
+        website,
+        wallets,
+        pitch,
+        gender: finalGender,
+        country,
+        ...(lumaSessionKey !== undefined ? { lumaSessionKey } : {}),
+        ...(proxyUrl !== undefined ? { proxyUrl } : {}),
+        metadata,
+      },
     });
     return c.json({ success: true, attendee });
   } catch (err: any) {
