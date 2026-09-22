@@ -1200,7 +1200,7 @@ export class AutomationRunner {
       return false;
     }
 
-    if (id && this.pendingIntervention.id !== id) {
+    if (id && id !== "hitl_pending" && id !== "latest" && this.pendingIntervention.id !== id) {
       this.log(`⚠️ [HITL] resolveIntervention id mismatch: expected ${this.pendingIntervention.id}, got ${id}`, "warn");
       return false;
     }
@@ -1349,9 +1349,10 @@ export class AutomationRunner {
         await triggerLocator.dispatchEvent("change").catch(() => {});
       }
 
-      if (remember !== false && person?.id && field.label) {
+      const attendeeIdentifier = person?.id || person?.email;
+      if (remember !== false && attendeeIdentifier && field.label) {
         try {
-          await saveAnswerToMemory(person.id, field.label, answer);
+          await saveAnswerToMemory(attendeeIdentifier, field.label, answer);
           this.log(`💾 [HITL] Remembered answer for "${field.label}": "${masked}"`, "info");
         } catch (memErr: any) {
           this.log(`⚠️ [HITL] Failed to persist answer to memory: ${memErr.message}`, "warn");
