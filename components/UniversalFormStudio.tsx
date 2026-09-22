@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Globe,
   Sparkles,
@@ -257,7 +257,34 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
   const [activeTab, setActiveTab] = useState<"matrix" | "single" | "live">("matrix");
   const [runnerStatus, setRunnerStatus] = useState<any>(null);
 
-  // Poll automation runner status for tab indicators and live screens
+  // --------------------------------------------------------------------------
+  // Human-in-the-Loop (HITL) Real-Time Intervention State
+  // --------------------------------------------------------------------------
+  const [interventionValue, setInterventionValue] = useState<string>("");
+  const [interventionRemember, setInterventionRemember] = useState<boolean>(true);
+  const [isSubmittingIntervention, setIsSubmittingIntervention] = useState<boolean>(false);
+  const [optimisticResolvedId, setOptimisticResolvedId] = useState<string | null>(null);
+  const [interventionToast, setInterventionToast] = useState<{
+    message: string;
+    type: "success" | "error";
+  } | null>(null);
+  const interventionInputRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null);
+  const lastChimedInterventionId = useRef<string | null>(null);
+
+  // Fetch status helper
+  const fetchRunnerStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/automation/status", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setRunnerStatus(data);
+        return data;
+      }
+    } catch {}
+    return null;
+  }, []);
+
+  // Poll automation runner status for tab indicators, alerts, and live screens
   useEffect(() => {
     let isMounted = true;
     const fetchStatus = async () => {
@@ -273,12 +300,113 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
     };
 
     fetchStatus();
-    const interval = setInterval(fetchStatus, runnerStatus?.isRunning ? 800 : 2500);
+    const isHighFreq = runnerStatus?.isRunning || runnerStatus?.isHumanInterventionNeeded;
+    const interval = setInterval(fetchStatus, isHighFreq ? 800 : 2500);
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [runnerStatus?.isRunning]);
+  }, [runnerStatus?.isRunning, runnerStatus?.isHumanInterventionNeeded]);
+
+  // If human intervention is needed but pendingIntervention is missing from status, fetch /api/automation/intervention
+  useEffect(() => {
+    if (runnerStatus?.isHumanInterventionNeeded && !runnerStatus?.pendingIntervention) {
+      fetch("/api/automation/intervention")
+        .then((res) => res.json())
+        .then((data) => {
+          if (data?.pending) {
+            setRunnerStatus((prev: any) => ({ ...prev, pendingIntervention: data.pending }));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [runnerStatus?.isHumanInterventionNeeded, runnerStatus?.pendingIntervention]);
+
+  // Handle chime, notification, and autofocus when a new intervention appears
+  useEffect(() => {
+    const pending = runnerStatus?.pendingIntervention;
+    if (runnerStatus?.isHumanInterventionNeeded && pending && pending.id !== optimisticResolvedId) {
+      if (pending.id !== lastChimedInterventionId.current) {
+        lastChimedInterventionId.current = pending.id;
+        playNotificationChime();
+        triggerDesktopNotification(
+          "⚠️ Human Intervention Required (Paused)",
+          `Question: "${pending.fieldLabel}" for ${pending.attendeeName || "Attendee"}`
+        );
+        // Prepopulate checkbox with "yes" if fieldType is checkbox
+        if (pending.fieldType === "checkbox") {
+          setInterventionValue("yes");
+        } else {
+          setInterventionValue("");
+        }
+        setInterventionRemember(true);
+        // Autofocus input after paint
+        setTimeout(() => {
+          interventionInputRef.current?.focus();
+        }, 150);
+      }
+    } else if (!runnerStatus?.isHumanInterventionNeeded) {
+      if (optimisticResolvedId) {
+        setOptimisticResolvedId(null);
+      }
+    }
+  }, [runnerStatus?.isHumanInterventionNeeded, runnerStatus?.pendingIntervention, optimisticResolvedId]);
+
+  // Handle human intervention submission
+  const handleInterventionSubmit = async () => {
+    const pending = runnerStatus?.pendingIntervention;
+    if (!pending?.id) return;
+    if (!interventionValue.trim() && pending.fieldType !== "checkbox") return;
+
+    setIsSubmittingIntervention(true);
+    try {
+      const res = await fetch("/api/automation/intervention", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: pending.id,
+          value: interventionValue,
+          remember: interventionRemember,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Failed to submit intervention answer.");
+      }
+
+      // Optimistically clear local intervention state
+      setOptimisticResolvedId(pending.id);
+      setInterventionValue("");
+
+      // Show success toast
+      setInterventionToast({
+        message: "Answer submitted! Automation resuming...",
+        type: "success",
+      });
+      setTimeout(() => {
+        setInterventionToast(null);
+      }, 4500);
+
+      // Trigger immediate refresh of automation status and screencast frame
+      await fetchRunnerStatus();
+      if (onRefreshData) {
+        try {
+          await onRefreshData();
+        } catch {}
+      }
+    } catch (err: any) {
+      setInterventionToast({
+        message: err.message || "Failed to submit answer.",
+        type: "error",
+      });
+      setTimeout(() => {
+        setInterventionToast(null);
+      }, 4500);
+    } finally {
+      setIsSubmittingIntervention(false);
+    }
+  };
 
   // --------------------------------------------------------------------------
   // Bulk Automation State
@@ -1106,8 +1234,49 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
     persistTemplates(savedTemplates.filter((t) => t.id !== id));
   };
 
+  const pendingIntervention = runnerStatus?.pendingIntervention || (
+    runnerStatus?.isHumanInterventionNeeded ? {
+      id: "hitl_pending",
+      attendeeName: runnerStatus?.currentAttendee?.name || "Active Attendee",
+      attendeeEmail: runnerStatus?.currentAttendee?.email || "",
+      eventTitle: runnerStatus?.currentTitle || runnerStatus?.currentEvent?.title || "Active Target Event",
+      fieldLabel: runnerStatus?.humanInterventionReason || "Form Question requires input",
+      fieldType: "text",
+      options: [],
+    } : null
+  );
+
+  const isInterventionVisible =
+    Boolean(runnerStatus?.isHumanInterventionNeeded || runnerStatus?.pendingIntervention) &&
+    pendingIntervention?.id !== optimisticResolvedId;
+
   return (
     <div className="flex-1 w-full h-full overflow-y-auto min-h-0 bg-background custom-scrollbar">
+      {/* Real-time Floating Toast Alert */}
+      {interventionToast && (
+        <div
+          className={`fixed top-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 rounded-2xl shadow-2xl border backdrop-blur-md animate-in slide-in-from-top-4 fade-in duration-200 ${
+            interventionToast.type === "success"
+              ? "bg-emerald-950/95 border-emerald-500/60 text-emerald-100 shadow-emerald-950/50"
+              : "bg-rose-950/95 border-rose-500/60 text-rose-100 shadow-rose-950/50"
+          }`}
+        >
+          {interventionToast.type === "success" ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+          )}
+          <span className="text-xs font-semibold">{interventionToast.message}</span>
+          <button
+            type="button"
+            onClick={() => setInterventionToast(null)}
+            className="ml-2 text-muted-foreground hover:text-foreground cursor-pointer p-0.5"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col gap-5 p-4 sm:p-6 md:p-8 max-w-7xl mx-auto w-full pb-36">
         {/* ================================================================== */}
         {/* HERO COMMAND HEADER: Tab Selector & Visual Mode Indicator           */}
@@ -1175,12 +1344,300 @@ export const UniversalFormStudio: React.FC<UniversalFormStudioProps> = ({
             >
               <Tv className="w-3.5 h-3.5 text-primary" />
               <span>Live Screencast</span>
-              {runnerStatus?.isRunning && (
+              {isInterventionVisible ? (
+                <span className="px-1.5 py-0.2 rounded-md bg-amber-500 text-black font-bold text-[9px] uppercase animate-pulse">
+                  HITL Pause
+                </span>
+              ) : runnerStatus?.isRunning ? (
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse inline-block" />
-              )}
+              ) : null}
             </button>
           </div>
         </div>
+
+        {/* ================================================================== */}
+        {/* HUMAN-IN-THE-LOOP (HITL) FLOATING / TOP INTERVENTION ALERT BANNER */}
+        {/* ================================================================== */}
+        {isInterventionVisible && pendingIntervention && (
+          <div className="relative rounded-3xl p-5 sm:p-6 bg-gradient-to-r from-amber-500/[0.12] via-background to-amber-950/[0.20] border-2 border-amber-500/70 shadow-[0_0_40px_rgba(245,158,11,0.25)] backdrop-blur-xl animate-in fade-in zoom-in-95 duration-200 transition-all">
+            {/* Floating top amber radar badge */}
+            <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 pb-4 border-b border-amber-500/20">
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-500 dark:text-amber-400">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  </span>
+                  <span className="text-[11px] font-mono font-bold tracking-wider uppercase">
+                    ⚠️ HUMAN INTERVENTION REQUIRED (PAUSED)
+                  </span>
+                </div>
+                <span className="text-xs text-muted-foreground font-mono">
+                  Session: {pendingIntervention.sessionId || runnerStatus?.sessionId || "Active"}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-muted-foreground">Automation paused on live DOM field</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pt-4 items-start">
+              {/* Question & Input Form Area (8 cols on lg) */}
+              <div className="lg:col-span-8 space-y-4">
+                {/* Context metadata: Attendee & Event */}
+                <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+                  <span className="flex items-center gap-1.5 font-medium text-foreground bg-muted/60 px-2.5 py-1 rounded-lg border border-border/60">
+                    <User className="w-3.5 h-3.5 text-amber-500" />
+                    <span>
+                      Attendee: <strong className="text-foreground">{pendingIntervention.attendeeName || "Attendee"}</strong>
+                      {pendingIntervention.attendeeEmail ? ` (${pendingIntervention.attendeeEmail})` : ""}
+                    </span>
+                  </span>
+
+                  <span className="flex items-center gap-1.5 font-medium text-foreground bg-muted/60 px-2.5 py-1 rounded-lg border border-border/60 truncate max-w-md">
+                    <Globe className="w-3.5 h-3.5 text-amber-500" />
+                    <span className="truncate">
+                      Event: <strong className="text-foreground">{pendingIntervention.eventTitle || runnerStatus?.currentTitle || "Autonomous Target"}</strong>
+                    </span>
+                  </span>
+
+                  {pendingIntervention.fieldType && (
+                    <Badge variant="outline" className="text-[10px] font-mono border-amber-500/40 text-amber-500 uppercase px-2 py-0.5">
+                      {pendingIntervention.fieldType}
+                    </Badge>
+                  )}
+                </div>
+
+                {/* Question Prompt */}
+                <div className="space-y-1">
+                  <div className="text-[11px] font-mono uppercase tracking-wider text-amber-500/90 font-semibold flex items-center gap-1.5">
+                    <Brain className="w-3.5 h-3.5" />
+                    <span>Question Prompt</span>
+                  </div>
+                  <div className="text-lg sm:text-xl font-bold text-foreground leading-snug">
+                    {pendingIntervention.fieldLabel || "Please supply answer for required field:"}
+                  </div>
+                  {runnerStatus?.humanInterventionReason && (
+                    <p className="text-xs text-amber-500/80 font-mono pt-0.5">
+                      Reason: {runnerStatus.humanInterventionReason}
+                    </p>
+                  )}
+                </div>
+
+                {/* Interactive Controls tailored to fieldType */}
+                {/* Case 1: Dropdown / Combobox / Select / Radio with options */}
+                {(pendingIntervention.fieldType === "combobox" ||
+                  pendingIntervention.fieldType === "select" ||
+                  pendingIntervention.fieldType === "radio") &&
+                  pendingIntervention.options &&
+                  pendingIntervention.options.length > 0 && (
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                        <span>Select option from form:</span>
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {pendingIntervention.options.map((option: string) => {
+                          const isSelected = interventionValue === option;
+                          return (
+                            <button
+                              key={option}
+                              type="button"
+                              onClick={() => setInterventionValue(option)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                                isSelected
+                                  ? "bg-amber-500 text-black border-amber-400 shadow-md shadow-amber-500/25 font-bold scale-[1.02]"
+                                  : "bg-background/90 hover:bg-muted text-foreground border-border hover:border-amber-500/50"
+                              }`}
+                            >
+                              {option}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                {/* Case 2: Checkbox Yes / No buttons */}
+                {pendingIntervention.fieldType === "checkbox" && (
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                      <span>Choose agreement:</span>
+                    </label>
+                    <div className="flex gap-3 max-w-sm">
+                      <button
+                        type="button"
+                        onClick={() => setInterventionValue("yes")}
+                        className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                          interventionValue.toLowerCase() === "yes" || interventionValue.toLowerCase() === "true"
+                            ? "bg-emerald-600 text-white border-emerald-500 shadow-md shadow-emerald-600/20 scale-[1.02]"
+                            : "bg-background/90 text-foreground border-border hover:border-emerald-500/50 hover:bg-muted"
+                        }`}
+                      >
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span>Yes / Agree</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInterventionValue("no")}
+                        className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-2 ${
+                          interventionValue.toLowerCase() === "no" || interventionValue.toLowerCase() === "false"
+                            ? "bg-rose-600 text-white border-rose-500 shadow-md shadow-rose-600/20 scale-[1.02]"
+                            : "bg-background/90 text-foreground border-border hover:border-rose-500/50 hover:bg-muted"
+                        }`}
+                      >
+                        <X className="w-4 h-4" />
+                        <span>No / Decline</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Case 3: Text input / Textarea / Custom input */}
+                {pendingIntervention.fieldType !== "checkbox" && (
+                  <div className="space-y-1.5">
+                    {(pendingIntervention.fieldType === "combobox" ||
+                      pendingIntervention.fieldType === "select" ||
+                      pendingIntervention.fieldType === "radio") &&
+                      pendingIntervention.options &&
+                      pendingIntervention.options.length > 0 && (
+                        <label className="text-[11px] text-muted-foreground">
+                          Or enter custom answer:
+                        </label>
+                      )}
+                    {pendingIntervention.fieldType === "textarea" ? (
+                      <textarea
+                        ref={interventionInputRef as any}
+                        autoFocus
+                        rows={3}
+                        value={interventionValue}
+                        onChange={(e) => setInterventionValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && !e.shiftKey) {
+                            e.preventDefault();
+                            handleInterventionSubmit();
+                          }
+                        }}
+                        placeholder="Type your response here... (Press Enter to submit)"
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-border focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 bg-background/90 text-foreground text-sm resize-none outline-none transition-all placeholder:text-muted-foreground/60"
+                      />
+                    ) : (
+                      <input
+                        ref={interventionInputRef as any}
+                        autoFocus
+                        type="text"
+                        value={interventionValue}
+                        onChange={(e) => setInterventionValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleInterventionSubmit();
+                          }
+                        }}
+                        placeholder={
+                          pendingIntervention.fieldType === "combobox" || pendingIntervention.fieldType === "select"
+                            ? "Type custom answer or select option above..."
+                            : "Enter answer... (Press Enter to submit)"
+                        }
+                        className="w-full px-3.5 py-2.5 rounded-xl border border-border focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 bg-background/90 text-foreground text-sm outline-none transition-all placeholder:text-muted-foreground/60"
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* Remember in Attendee Memory Checkbox & Action Button */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none py-1">
+                    <input
+                      type="checkbox"
+                      checked={interventionRemember}
+                      onChange={(e) => setInterventionRemember(e.target.checked)}
+                      className="w-4 h-4 rounded border-border text-amber-500 focus:ring-amber-500/20 accent-amber-500"
+                    />
+                    <span className="text-xs font-medium text-foreground">
+                      Remember answer for future events (save to attendee memory)
+                    </span>
+                  </label>
+
+                  <button
+                    type="button"
+                    disabled={
+                      isSubmittingIntervention ||
+                      (!interventionValue.trim() && pendingIntervention.fieldType !== "checkbox")
+                    }
+                    onClick={handleInterventionSubmit}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 disabled:opacity-50 disabled:pointer-events-none text-black font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all cursor-pointer self-start sm:self-auto"
+                  >
+                    {isSubmittingIntervention ? (
+                      <>
+                        <RefreshCw className="w-4 h-4 animate-spin" />
+                        <span>Resuming Automation...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-4 h-4 fill-current" />
+                        <span>⚡ Submit & Resume Automation 🚀</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Live Screencast Viewport Preview (4 cols on lg) */}
+              <div className="lg:col-span-4 w-full flex flex-col gap-2">
+                <div className="flex items-center justify-between text-[11px] font-mono text-muted-foreground">
+                  <span className="flex items-center gap-1 text-amber-400 font-semibold">
+                    <Tv className="w-3.5 h-3.5" /> Paused Browser Frame
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("live")}
+                    className="text-primary hover:underline flex items-center gap-1 text-[11px] font-semibold cursor-pointer"
+                  >
+                    <span>Full Takeover Console</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </button>
+                </div>
+
+                {runnerStatus?.latestFrame ? (
+                  <div
+                    onClick={() => setActiveTab("live")}
+                    className="relative rounded-2xl overflow-hidden border-2 border-amber-500/40 bg-black aspect-video cursor-pointer group shadow-md hover:border-amber-400 transition-all"
+                    title="Click to open Full Live Takeover Console"
+                  >
+                    <img
+                      src={
+                        runnerStatus.latestFrame.startsWith("data:")
+                          ? runnerStatus.latestFrame
+                          : `data:image/jpeg;base64,${runnerStatus.latestFrame}`
+                      }
+                      alt="Paused DOM Frame"
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1 text-white">
+                      <Tv className="w-5 h-5 text-amber-400" />
+                      <span className="text-xs font-bold">Switch to Live Screen</span>
+                    </div>
+                    <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded-md bg-black/80 text-[10px] font-mono text-amber-300 border border-amber-500/30">
+                      PAUSED AT CHECKPOINT
+                    </div>
+                  </div>
+                ) : (
+                  <div
+                    onClick={() => setActiveTab("live")}
+                    className="rounded-2xl border-2 border-dashed border-amber-500/30 bg-muted/30 aspect-video flex flex-col items-center justify-center gap-2 text-center p-4 cursor-pointer hover:bg-muted/50 transition-all"
+                  >
+                    <Tv className="w-6 h-6 text-amber-500/70 animate-pulse" />
+                    <span className="text-xs text-muted-foreground font-medium">
+                      Screencast frame available in Live Console
+                    </span>
+                    <span className="text-[10px] text-primary font-bold">Click to open Live Takeover &rarr;</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ================================================================== */}
         {/* TAB 1: BULK AUTOMATION (Enterprise Data Tables)                   */}
