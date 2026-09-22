@@ -37,6 +37,7 @@ yarn-error.log*
 
 # browser profile & session secrets
 .browser-profile/
+.browser-profile-stealth/
 
 # local database files
 *.db

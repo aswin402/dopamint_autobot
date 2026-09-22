@@ -2,13 +2,13 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { Sidebar, NavTab } from "@/components/Sidebar";
-import Header from "@/components/Header";
 import { DashboardOverview } from "@/components/DashboardOverview";
 import AutomationDeck from "@/components/AutomationDeck";
 import { ChatGPTView } from "@/components/ChatGPTView";
 import { TeamRoster } from "@/components/TeamRoster";
 import { SheetsSyncView } from "@/components/SheetsSyncView";
 import { UniversalFormStudio } from "@/components/UniversalFormStudio";
+import { GlobalChatBar } from "@/components/GlobalChatBar";
 import ExportModal from "@/components/ExportModal";
 import { playNotificationChime, triggerDesktopNotification } from "@/lib/notifications";
 import { CheckCircle2, Bell, X } from "lucide-react";
@@ -290,25 +290,6 @@ export default function Home() {
 
   const selectedAttendee = attendees.find((a) => a.id === selectedAttendeeId);
 
-  const getActiveTabTitle = () => {
-    switch (activeTab) {
-      case "dashboard":
-        return "Dashboard Overview";
-      case "automations":
-        return "Form Automation Deck";
-      case "chat":
-        return "AI Agent Console";
-      case "team":
-        return "Team Roster";
-      case "sheets":
-        return "Google Sheets Sync";
-      case "form_runner":
-        return "Universal Form Studio";
-      default:
-        return "Dopamint Autonomous Agent";
-    }
-  };
-
   return (
     <div className="flex h-screen w-screen max-w-[100vw] bg-background text-foreground overflow-hidden antialiased font-sans transition-colors duration-200">
       {/* 1. Left Minimalist Collapsible Sidebar */}
@@ -317,6 +298,9 @@ export default function Home() {
         setActiveTab={setActiveTab}
         honoStatus={honoStatus}
         activeJobRunning={runnerStatus.isRunning}
+        isVisualMode={isVisualMode}
+        onToggleVisualMode={toggleVisualMode}
+        runnerStatus={runnerStatus}
         onNewTask={async () => {
           setActiveTab("chat");
           try {
@@ -332,23 +316,10 @@ export default function Home() {
         }}
       />
 
-      {/* 2. Main Workspace Canvas */}
+      {/* 2. Main Workspace Canvas (Full Height) */}
       <div className="flex-1 flex flex-col h-full min-w-0 bg-background relative overflow-hidden">
-        {/* Top Header */}
-        <Header
-          activeTitle={getActiveTabTitle()}
-          subtitle="Bulk Web Form & Registration Automation"
-          selectedAttendeeName={selectedAttendee?.name}
-          runnerStatus={runnerStatus}
-          isVisualMode={isVisualMode}
-          onToggleVisualMode={toggleVisualMode}
-          onSyncSheets={handleSyncSheets}
-          isSyncingSheets={isSyncingSheets}
-          onOpenExport={() => openExportModal("matrix")}
-        />
-
         {/* Dynamic Center Canvas */}
-        <main className="flex-1 flex flex-col h-[calc(100vh-4rem)] min-w-0 overflow-hidden relative">
+        <main className="flex-1 flex flex-col h-full min-w-0 overflow-hidden relative">
           {activeTab === "dashboard" && (
             <DashboardOverview
               metrics={metrics}
@@ -432,6 +403,22 @@ export default function Home() {
           )}
         </main>
       </div>
+
+      {/* 3. Global Floating AI Assistant & Chatbar */}
+      <GlobalChatBar
+        activeTab={activeTab}
+        onNavigateTab={setActiveTab}
+        runnerStatus={runnerStatus}
+        attendees={attendees}
+        events={events}
+        onTriggerAutomation={handleStartAutomation}
+        onPauseAutomation={handlePauseAutomation}
+        onResumeAutomation={handleResumeAutomation}
+        onStopAutomation={handleStopAutomation}
+        isVisualMode={isVisualMode}
+        onToggleVisualMode={toggleVisualMode}
+        refreshData={fetchEventsData}
+      />
 
       <ExportModal
         isOpen={isExportModalOpen}

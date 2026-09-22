@@ -1,9 +1,10 @@
 "use client";
 
 import React from "react";
-import { Sparkles, RefreshCw, ExternalLink, Activity, User, CheckCircle2, Eye, EyeOff, Download } from "lucide-react";
+import { Sparkles, RefreshCw, ExternalLink, Activity, User, CheckCircle2, Eye, EyeOff, Download, LogIn, LogOut } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/context/AuthContext";
 
 interface HeaderProps {
   activeTitle: string;
@@ -32,6 +33,8 @@ export default function Header({
   isSyncingSheets,
   onOpenExport,
 }: HeaderProps) {
+  const { user, isAuthenticated, openAuthModal, logout } = useAuth();
+
   return (
     <header className="h-16 border-b border-border bg-card/80 backdrop-blur-md px-6 flex items-center justify-between z-20 sticky top-0 transition-colors">
       {/* Breadcrumb / Title */}
@@ -146,6 +149,37 @@ export default function Header({
             {isSyncingSheets ? "Syncing..." : "Sync Sheets"}
           </span>
         </Button>
+
+        {/* User Authentication Profile / Sign In */}
+        {isAuthenticated && user ? (
+          <div className="flex items-center gap-2 pl-1.5 border-l border-border/60">
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-muted/60 border border-border text-xs">
+              <div className="w-5 h-5 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px]">
+                {user.name.slice(0, 1).toUpperCase()}
+              </div>
+              <span className="font-semibold text-foreground truncate max-w-[110px] hidden sm:inline">
+                {user.name}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => logout()}
+              className="p-1.5 rounded-xl text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-colors cursor-pointer"
+              title="Sign Out"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            onClick={openAuthModal}
+            className="rounded-xl text-xs gap-1.5 h-8 bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30 font-semibold cursor-pointer shadow-2xs"
+          >
+            <LogIn className="w-3.5 h-3.5" />
+            <span>Sign In</span>
+          </Button>
+        )}
       </div>
     </header>
   );

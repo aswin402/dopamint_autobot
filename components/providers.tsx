@@ -5,6 +5,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider as NextThemesProvider } from 'next-themes';
 import { useAppStore } from '@/store/useAppStore';
 
+import { AuthProvider } from '@/context/AuthContext';
+import { AuthModal } from '@/components/auth/AuthModal';
+
 export function Providers({ children }: { children: React.ReactNode }) {
   // Rehydrate Zustand store on mount (client side only) to prevent SSR hydration errors
   useEffect(() => {
@@ -32,7 +35,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
         enableSystem
         disableTransitionOnChange
       >
-        {children}
+        <AuthProvider>
+          {children}
+          <AuthModal />
+        </AuthProvider>
       </NextThemesProvider>
     </QueryClientProvider>
   );

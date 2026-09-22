@@ -210,14 +210,14 @@ app.get("/api/attendees", async (c) => {
 app.post("/api/attendees", async (c) => {
   try {
     const body = await c.req.json();
-    const { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch } = body;
+    const { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch, lumaSessionKey, proxyUrl } = body;
     if (!name || !email) {
       return c.json({ error: "Name and email are required" }, 400);
     }
     const attendee = await prisma.attendee.upsert({
       where: { email },
-      update: { name, role, company, phone, telegram, twitter, linkedin, wallets, pitch },
-      create: { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch },
+      update: { name, role, company, phone, telegram, twitter, linkedin, wallets, pitch, lumaSessionKey, proxyUrl },
+      create: { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch, lumaSessionKey, proxyUrl },
     });
     return c.json({ success: true, attendee }, 201);
   } catch (err: any) {
@@ -229,11 +229,11 @@ app.put("/api/attendees/:id", async (c) => {
   try {
     const id = c.req.param("id");
     const body = await c.req.json();
-    const { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch } = body;
+    const { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch, lumaSessionKey, proxyUrl } = body;
 
     const attendee = await prisma.attendee.update({
       where: { id },
-      data: { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch },
+      data: { name, email, role, company, phone, telegram, twitter, linkedin, wallets, pitch, lumaSessionKey, proxyUrl },
     });
     return c.json({ success: true, attendee });
   } catch (err: any) {
@@ -907,9 +907,10 @@ serve(
   {
     fetch: app.fetch,
     port: PORT,
+    hostname: "0.0.0.0",
   },
   (info) => {
-    console.log(`🚀 [Hono Backend Live]: Running at http://localhost:${info.port}`);
+    console.log(`🚀 [Hono Backend Live]: Running on port ${info.port} (0.0.0.0)`);
   }
 );
 

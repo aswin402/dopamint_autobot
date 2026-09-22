@@ -599,21 +599,35 @@ class AutomationRunner {
     let consecutiveSuccesses = 0;
 
     try {
+      const proxyServer = process.env.PROXY_SERVER || process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+      const baseLaunchOptions: any = {
+        headless: this.isHeadless,
+        slowMo: this.isHeadless ? 0 : 150,
+        viewport: { width: 1280, height: 800 },
+        args: [
+          "--disable-blink-features=AutomationControlled",
+          "--no-sandbox",
+          "--disable-dev-shm-usage",
+        ],
+      };
+      if (proxyServer) {
+        baseLaunchOptions.proxy = { server: proxyServer };
+        if (process.env.PROXY_USERNAME && process.env.PROXY_PASSWORD) {
+          baseLaunchOptions.proxy.username = process.env.PROXY_USERNAME;
+          baseLaunchOptions.proxy.password = process.env.PROXY_PASSWORD;
+        }
+        this.log(`🌐 Routing browser traffic through proxy: ${proxyServer}`, "info");
+      }
+
       try {
-        context = await chromium.launchPersistentContext(profileDir, {
-          headless: this.isHeadless,
-          slowMo: this.isHeadless ? 0 : 150,
-          viewport: { width: 1280, height: 800 },
-        });
+        context = await chromium.launchPersistentContext(profileDir, baseLaunchOptions);
       } catch (launchErr: any) {
         if (!this.isHeadless) {
           this.log(`⚠️ Failed to launch in headed visual mode (${launchErr.message}). Falling back to headless...`, "warn");
           this.isHeadless = true;
-          context = await chromium.launchPersistentContext(profileDir, {
-            headless: true,
-            slowMo: 0,
-            viewport: { width: 1280, height: 800 },
-          });
+          baseLaunchOptions.headless = true;
+          baseLaunchOptions.slowMo = 0;
+          context = await chromium.launchPersistentContext(profileDir, baseLaunchOptions);
         } else {
           throw launchErr;
         }
@@ -658,6 +672,33 @@ class AutomationRunner {
         this.currentAttendee = { id: person.id, name: person.name, email: person.email };
 
         this.log(`👤 Processing attendee: ${person.name} (${person.email})`, "info");
+
+        if (person.lumaSessionKey) {
+          const exp = Math.floor(Date.now() / 1000) + 86400 * 30; // 30 days
+          await context.addCookies([
+            {
+              name: "luma.auth-session-key",
+              value: person.lumaSessionKey,
+              domain: ".luma.com",
+              path: "/",
+              expires: exp,
+              httpOnly: true,
+              secure: true,
+              sameSite: "Lax",
+            },
+            {
+              name: "luma.auth-session-key",
+              value: person.lumaSessionKey,
+              domain: ".lu.ma",
+              path: "/",
+              expires: exp,
+              httpOnly: true,
+              secure: true,
+              sameSite: "Lax",
+            },
+          ]);
+          this.log(`🔑 Injected authenticated Luma session for ${person.name} from database.`, "info");
+        }
 
         for (let i = 0; i < events.length; i++) {
           if (!this.isRunning) break;
@@ -972,19 +1013,37 @@ class AutomationRunner {
         await inp.fill(person.role);
       } else if (/country|based|국가|where.*based/i.test(combined)) {
         await inp.fill(person.country || "South Korea");
-      } else if (/who invited|초대|추천인|how\s*did\s*you\s*hear/i.test(combined)) {
+      } else if (/tweet|quote\s*tweet|x\s*link|twitter\s*link/i.test(combined)) {
+        await inp.fill("https://x.com/aswinvishal/status/18385739201948201");
+      } else if (/who invited|초대|추천인|how\s*did\s*you\s*hear|referred|referral/i.test(combined)) {
         await inp.fill("Dopamint / Ecosystem Partner");
       } else if (/dietary|allergy|음식|식사/i.test(combined)) {
         await inp.fill("None (없음)");
-      } else if (/pitch|building|describe\s*yourself|message|inquiry|query|comment|feedback|notes|소개/i.test(combined)) {
+      } else if (/pitch|building|describe|message|inquiry|query|comment|feedback|notes|소개|이유|계기|관심|질문|신청/i.test(combined)) {
         await inp.fill(person.pitch || person.message || "Building autonomous AI agent platforms and decentralized data compute.");
+      } else if (placeholder.includes("Select an option") || placeholder.includes("선택")) {
+        try {
+          await inp.click();
+          await page.waitForTimeout(300);
+          const opt = page.locator("[role='option'], [role='menuitem'], .dropdown-item, li").first();
+          if (await opt.isVisible()) {
+            await opt.click();
+            await page.waitForTimeout(200);
+          }
+        } catch (e) {}
+      } else {
+        // Safe fallback for unclassified required inputs
+        const isRequired = await inp.getAttribute("required").catch(() => false) || combined.includes("*");
+        if (isRequired) {
+          await inp.fill(person.company || "Dopamint");
+        }
       }
 
       await page.waitForTimeout(pacing.fieldDelayMs);
     }
 
     // HTML Dropdowns (<select>)
-    const selects = await page.locator("form select").all();
+    const selects = await page.locator("select").all();
     for (const sel of selects) {
       try {
         if (!(await sel.isVisible())) continue;
@@ -996,10 +1055,11 @@ class AutomationRunner {
       } catch (e) {}
     }
 
-    // Checkboxes / Consent waivers
-    const checkboxes = await page.locator("form input[type='checkbox']").all();
+    // Checkboxes / Consent waivers (both form and modal level)
+    const checkboxes = await page.locator("input[type='checkbox']").all();
     for (const cb of checkboxes) {
       try {
+        if (!(await cb.isVisible())) continue;
         await cb.evaluate((el: any) => {
           if (!el.checked) {
             el.click();
@@ -1162,16 +1222,51 @@ class AutomationRunner {
     options: { preSubmitDelayMs?: number } = {}
   ): Promise<{ success: boolean; verified: boolean; message: string }> {
     let isConfirmed = false;
-    const responseHandler = (res: any) => {
+    let postErrorOccurred = false;
+    let postErrorMessage = "";
+    let lastResponseStatus = 0;
+
+    const responseHandler = async (res: any) => {
       try {
         const req = res.request();
-        if (req.method() === "POST" && res.status() >= 200 && res.status() < 300) {
-          isConfirmed = true;
-          this.log(`🎯 [HTTP ${res.status()} OK]: Detected server response from ${res.url()}`, "success");
+        const method = req.method();
+        const status = res.status();
+        const resUrl = res.url();
+
+        if (method === "POST" || method === "PUT") {
+          lastResponseStatus = status;
+          if (status >= 200 && status < 300) {
+            isConfirmed = true;
+            this.log(`🎯 [HTTP ${status} OK]: Detected server response from ${resUrl}`, "success");
+          } else if (status >= 400) {
+            postErrorOccurred = true;
+            let errDetail = "";
+            try {
+              const text = await res.text();
+              const json = JSON.parse(text);
+              errDetail = json.error || json.message || json.details || text.slice(0, 150);
+            } catch {
+              errDetail = `HTTP ${status}`;
+            }
+            postErrorMessage = `Target server error HTTP ${status} on ${resUrl}: ${errDetail}`;
+            this.log(`❌ [HTTP ${status} Server Error] on ${resUrl}: ${errDetail}`, "error");
+          }
         }
       } catch (e) {}
     };
     page.on("response", responseHandler);
+
+    let consoleErrorMessage = "";
+    const consoleHandler = (msg: any) => {
+      if (msg.type() === "error") {
+        const text = msg.text();
+        if (/failed|error|rejected|badcredentials|535|invalid login|mail|smtp|status of 500/i.test(text)) {
+          consoleErrorMessage = text.slice(0, 200);
+          this.log(`⚠️ [Target Page Error]: ${consoleErrorMessage}`, "warn");
+        }
+      }
+    };
+    page.on("console", consoleHandler);
 
     this.log(`🌐 Navigating to target: ${url}...`, "info");
     await page.goto(url, { waitUntil: "networkidle", timeout: 35000 }).catch(async () => {
@@ -1333,7 +1428,7 @@ class AutomationRunner {
       await submitBtn.scrollIntoViewIfNeeded().catch(() => {});
       this.log(`🚀 Clicking submission action button: "${btnText}"...`, "info");
       await submitBtn.click({ force: true, timeout: 5000 });
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000);
       await this.captureFrame(page);
 
       // Turnstile / CAPTCHA check
@@ -1361,15 +1456,72 @@ class AutomationRunner {
       }
       await this.captureFrame(page);
 
-      const bodyText = await page.locator("body").innerText().catch(() => "");
-      const hasSuccessText = /thank\s*you|message\s*sent|successfully|received|submitted|success|ticket|confirmed/i.test(bodyText);
+      // 1. Check for HTTP POST failure (e.g. 500 Internal Server Error)
+      if (postErrorOccurred) {
+        page.off("response", responseHandler);
+        page.off("console", consoleHandler);
+        return {
+          success: false,
+          verified: false,
+          message: postErrorMessage || `Target server rejected form submission with HTTP ${lastResponseStatus}`,
+        };
+      }
 
-      if (isConfirmed || hasSuccessText) {
+      // 2. Check for on-page error alerts/elements
+      const errorAlert = page
+        .locator(".error, .alert-danger, .error-message, .form-error, .status-error, [role='alert']")
+        .first();
+      if ((await errorAlert.count()) > 0 && (await errorAlert.isVisible())) {
+        const alertText = await errorAlert.innerText().catch(() => "");
+        if (alertText && !/success|thank|confirmed/i.test(alertText)) {
+          page.off("response", responseHandler);
+          page.off("console", consoleHandler);
+          return {
+            success: false,
+            verified: false,
+            message: `Form rejected on page: "${alertText.trim().slice(0, 150)}"`,
+          };
+        }
+      }
+
+      // 3. Check for target page console error if not confirmed
+      if (consoleErrorMessage && !isConfirmed) {
+        page.off("response", responseHandler);
+        page.off("console", consoleHandler);
+        return {
+          success: false,
+          verified: false,
+          message: `Target page backend failed: ${consoleErrorMessage}`,
+        };
+      }
+
+      // 4. Check for explicit success indicators
+      const successEl = page
+        .locator(".success, .alert-success, .success-message, .form-success, .status-success, [data-status='success'], .thank-you")
+        .first();
+      const hasSuccessElement = (await successEl.count()) > 0 && (await successEl.isVisible());
+
+      const bodyText = await page.locator("body").innerText().catch(() => "");
+      const hasSpecificSuccessText =
+        /message\s*sent\s*successfully|thank\s*you\s*for\s*(contacting|your\s*message|reaching)|your\s*message\s*has\s*been\s*sent|submission\s*received|ticket\s*confirmed|registration\s*confirmed/i.test(
+          bodyText
+        );
+
+      page.off("response", responseHandler);
+      page.off("console", consoleHandler);
+
+      if (isConfirmed || hasSuccessElement || hasSpecificSuccessText) {
         return { success: true, verified: true, message: `Form submitted and verified successfully on ${url}` };
       } else {
-        return { success: true, verified: false, message: `Form submitted on ${url}` };
+        return {
+          success: false,
+          verified: false,
+          message: `Form submitted on ${url}, but no server confirmation (HTTP 200) or success message was received.`,
+        };
       }
     } else {
+      page.off("response", responseHandler);
+      page.off("console", consoleHandler);
       return { success: false, verified: false, message: `No viable submit button detected on ${url}` };
     }
   }

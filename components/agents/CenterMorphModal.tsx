@@ -128,7 +128,7 @@ export function CenterMorphModal({
                 )}
               >
                 {/* Header */}
-                {(title || description) && (
+                {(title || description) ? (
                   <div className="px-6 pt-5 pb-3 border-b border-border/60 flex items-start justify-between gap-4">
                     <div className="space-y-1">
                       {title && (
@@ -152,6 +152,15 @@ export function CenterMorphModal({
                       <X className="w-4 h-4" />
                     </button>
                   </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => onOpenChange(false)}
+                    className="absolute top-4 right-4 z-20 w-8 h-8 rounded-full bg-muted/80 hover:bg-muted text-muted-foreground hover:text-foreground flex items-center justify-center transition-colors cursor-pointer"
+                    aria-label="Close modal"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 )}
 
                 {/* Body Content */}

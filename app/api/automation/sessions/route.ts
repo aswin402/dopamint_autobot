@@ -2,15 +2,18 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import automationRunner from "@/lib/automation/runner";
 import { forwardToHono } from "@/lib/backend-proxy";
+import { getCurrentUser } from "@/lib/current-user";
 
-export async function GET() {
+export async function GET(req: Request) {
   const honoRes = await forwardToHono("/api/automation/sessions");
   if (honoRes && honoRes.ok) {
     return NextResponse.json(await honoRes.json());
   }
 
   try {
+    const user = await getCurrentUser(req);
     const jobs = await prisma.automationJob.findMany({
+      where: user ? { OR: [{ userId: user.id }, { userId: null }] } : undefined,
       orderBy: { createdAt: "desc" },
       take: 50,
       select: {
@@ -77,6 +80,7 @@ export async function POST(req: Request) {
   }
 
   try {
+    const user = await getCurrentUser(req);
     const body = rawBody ? JSON.parse(rawBody) : {};
     const { action, id, title, messages } = body;
 
@@ -104,17 +108,30 @@ export async function POST(req: Request) {
         return NextResponse.json({ success: false, error: "Session not found" }, { status: 404 });
       }
 
-      const status = automationRunner.loadArchivedSession(job);
-      let parsedMessages: any[] = [];
+      let parsedMessages = [];
       try {
         if (job.messages) {
-          parsedMessages = typeof job.messages === "string" ? JSON.parse(job.messages) : job.messages;
+          parsedMessages = JSON.parse(job.messages);
         }
-      } catch {}
+      } catch (e) {
+        console.warn("Failed to parse historical messages:", e);
+      }
+
+      const status = automationRunner.loadArchivedSession({
+        id: job.id,
+        title: job.title || "Archived Automation Run",
+        targetUrl: job.targetUrl || undefined,
+        totalTarget: job.totalTarget,
+        totalConfirmed: job.totalConfirmed,
+        totalFailed: job.totalFailed,
+        status: job.status,
+        logs: job.logs,
+        confirmations: job.confirmations,
+        latestFrame: job.latestFrame,
+      });
 
       return NextResponse.json({
         success: true,
-        message: "Archived session loaded",
         session: {
           ...job,
           parsedMessages,
@@ -136,10 +153,12 @@ export async function POST(req: Request) {
           title: title || "New Automation Session",
           status: "idle",
           messages: JSON.stringify(messages || []),
+          ...(user ? { userId: user.id } : {}),
         },
         update: {
           messages: JSON.stringify(messages || []),
           ...(title ? { title } : {}),
+          ...(user ? { userId: user.id } : {}),
         },
       });
 

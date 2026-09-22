@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { forwardToHono } from "@/lib/backend-proxy";
+import { getCurrentUser } from "@/lib/current-user";
 
 export async function GET() {
   try {
@@ -24,6 +25,7 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await getCurrentUser(req);
     const body = await req.json();
 
     const honoRes = await forwardToHono("/api/attendees", {
@@ -48,6 +50,8 @@ export async function POST(req: NextRequest) {
       wallets = "",
       pitch = "",
       country = "South Korea",
+      lumaSessionKey = null,
+      proxyUrl = null,
     } = body;
 
     if (!name || !email) {
@@ -69,6 +73,9 @@ export async function POST(req: NextRequest) {
         wallets,
         pitch,
         country,
+        lumaSessionKey,
+        proxyUrl,
+        ...(user ? { userId: user.id } : {}),
       },
       update: {
         name,
@@ -82,6 +89,8 @@ export async function POST(req: NextRequest) {
         wallets,
         pitch,
         country,
+        lumaSessionKey,
+        proxyUrl,
       },
     });
 
