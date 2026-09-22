@@ -31,7 +31,8 @@ export function normalizeQuestionKey(question: string): string {
   if (!question) return "";
   return question
     .toLowerCase()
-    .replace(/[*?:!#]/g, "")
+    .replace(/\((required|optional|선택|필수)\)/gi, "")
+    .replace(/[*?:!#()\[\]"']/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -115,6 +116,7 @@ export async function saveAnswerToMemory(
   }
 
   const normKey = normalizeQuestionKey(question);
+  if (!normKey) return;
   const metadata: ExtendedMetadata = safeParseJson(attendee.metadata);
 
   if (!metadata.qaMemory || typeof metadata.qaMemory !== "object") {
