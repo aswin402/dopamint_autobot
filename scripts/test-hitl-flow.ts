@@ -385,11 +385,89 @@ async function main() {
   }
   console.log("   ✅ Test B Passed: Combobox answer saved to Prisma DB qaMemory.");
 
+  // -------------------------------------------------------------
+  // Test C: Checkbox HITL Checkpoint & Boolean Parsing Verification
+  // -------------------------------------------------------------
+  console.log("\n🧪 --- Test C: Checkbox HITL Checkpoint & Strict Boolean Parsing ---");
+  const HTML_CHECKBOX_HITL_PAGE = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Confidential Key Gate</title>
+</head>
+<body>
+  <form id="nda-form" onsubmit="return false;">
+    <label id="secret-key-label" for="key-checkbox">Do you hold a secret early-access key? *</label>
+    <input type="checkbox" id="key-checkbox" name="secret_early_access_key" required />
+  </form>
+</body>
+</html>`;
+
+  await removeAnswerFromMemory(attendee.id, "do you hold a secret early-access key");
+  const ndaAttendee = await prisma.attendee.findUnique({ where: { id: attendee.id } });
+  if (!ndaAttendee) throw new Error("Attendee not found!");
+
+  await page.setContent(HTML_CHECKBOX_HITL_PAGE);
+  automationRunner.resetActiveSession("test_session_hitl_checkbox", "Checkbox HITL Verification");
+
+  const cbxFillPromise = automationRunner.fillFormFields(
+    page,
+    ndaAttendee,
+    { ...DEFAULT_PACING, fieldDelayMs: 50 },
+    eventContext
+  );
+
+  let cbxIntervention: any = null;
+  const cbxPollStart = Date.now();
+  while (Date.now() - cbxPollStart < 8000) {
+    if (automationRunner.getStatus().isHumanInterventionNeeded && automationRunner.getPendingIntervention()) {
+      cbxIntervention = automationRunner.getPendingIntervention();
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  if (!cbxIntervention) {
+    throw new Error("❌ Test C Failed: Runner did not enter HITL state for required unknown checkbox!");
+  }
+
+  console.log(`   Checkbox Intervention ID: ${cbxIntervention.id}`);
+  console.log(`   Checkbox Field Type: ${cbxIntervention.fieldType}`);
+
+  // Resolve with "yes"
+  const cbxResolved = await automationRunner.resolveIntervention(
+    cbxIntervention.id,
+    "yes",
+    true
+  );
+  if (!cbxResolved) {
+    throw new Error("❌ Test C Failed: resolveIntervention returned false for checkbox!");
+  }
+
+  await cbxFillPromise;
+
+  // Verify checkbox on page is checked
+  const isKeyChecked = await page.locator("#key-checkbox").isChecked();
+  console.log(`   Checkbox isChecked on page: ${isKeyChecked}`);
+  if (!isKeyChecked) {
+    throw new Error("❌ Test C Failed: Expected checkbox to be checked with answer 'yes'!");
+  }
+  console.log("   ✅ Test C Passed: Checkbox checked successfully with boolean 'yes'.");
+
+  // Verify in-memory synchronization on ndaAttendee
+  const inMemoryMeta = JSON.parse(ndaAttendee.metadata || "{}");
+  console.log(`   In-Memory qaMemory["do you hold a secret early-access key"]: "${inMemoryMeta.qaMemory?.["do you hold a secret early-access key"]}"`);
+  if (inMemoryMeta.qaMemory?.["do you hold a secret early-access key"] !== "yes") {
+    throw new Error("❌ Test C Failed: In-memory metadata was not synchronized!");
+  }
+  console.log("   ✅ Test C Passed: In-memory attendee.metadata was synchronized without requiring reload.");
+
   // Cleanup temporary test keys so other test suites stay isolated
   await removeAnswerFromMemory(attendee.id, "enter vip secret passphrase");
   await removeAnswerFromMemory(attendee.id, "select vip secret access code");
+  await removeAnswerFromMemory(attendee.id, "do you hold a secret early-access key");
   await browser.close();
-  console.log("\n🎉 ALL HITL ASSERTIONS (TEXT & COMBOBOX) PASSED! Task 4 verification successful.\n");
+  console.log("\n🎉 ALL HITL ASSERTIONS (TEXT, COMBOBOX & CHECKBOX) PASSED! Task 4 verification successful.\n");
 }
 
 main().catch((err) => {

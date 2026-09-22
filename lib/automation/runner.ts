@@ -1205,9 +1205,10 @@ export class AutomationRunner {
       return false;
     }
 
+    const sanitizedValue = String(value || "").slice(0, 2000);
     const resolver = this.interventionResolver;
     this.interventionResolver = null;
-    resolver({ value, remember });
+    resolver({ value: sanitizedValue, remember });
     return true;
   }
 
@@ -1266,7 +1267,13 @@ export class AutomationRunner {
     }
 
     const { value: answer, remember } = resolution;
-    this.log(`🎯 [HITL] Received human answer for "${field.label}": "${answer}"`, "info");
+    const isSensitive = /pass|secret|token|key|private|credential/i.test(field.label);
+    const masked = isSensitive
+      ? "***"
+      : answer.length > 3
+        ? `${answer.slice(0, 3)}***`
+        : "***";
+    this.log(`🎯 [HITL] Received human answer for "${field.label}": "${masked}"`, "info");
 
     try {
       if (field.type === "combobox") {
@@ -1287,7 +1294,27 @@ export class AutomationRunner {
           });
         }
       } else if (field.type === "radio") {
-        const radios = await page.locator(`input[type="radio"], [role="radio"]`).all();
+        let radioScope: Locator = triggerLocator;
+        const isContainer = await triggerLocator
+          .evaluate((el: HTMLElement) => el.getAttribute("role") === "radiogroup" || el.tagName === "FIELDSET")
+          .catch(() => false);
+
+        if (!isContainer) {
+          const name = await triggerLocator.getAttribute("name").catch(() => null);
+          if (name) {
+            radioScope = page.locator(`input[type="radio"][name="${CSS.escape(name)}"]`);
+          } else {
+            const hasParentGroup = await triggerLocator
+              .locator('xpath=ancestor::*[@role="radiogroup" or self::fieldset or self::form][1]')
+              .count()
+              .catch(() => 0);
+            if (hasParentGroup > 0) {
+              radioScope = triggerLocator.locator('xpath=ancestor::*[@role="radiogroup" or self::fieldset or self::form][1]');
+            }
+          }
+        }
+
+        const radios = await radioScope.locator(`input[type="radio"], [role="radio"]`).all();
         let clicked = false;
         const targetLower = answer.trim().toLowerCase();
         for (const r of radios) {
@@ -1304,14 +1331,14 @@ export class AutomationRunner {
           await interactWithDropdown(page, triggerLocator, answer).catch(() => {});
         }
       } else if (field.type === "checkbox") {
-        const shouldCheck = answer === "true" || answer === "yes" || answer === "1" || Boolean(answer);
-        if (shouldCheck) {
-          const isChecked = await triggerLocator.evaluate(
-            (el: any) => el.checked === true || el.getAttribute("aria-checked") === "true"
-          ).catch(() => false);
-          if (!isChecked) {
-            await triggerLocator.click().catch(() => {});
-          }
+        const shouldCheck = /^(true|yes|1|checked)$/i.test(String(answer).trim());
+        const isChecked = await triggerLocator.evaluate(
+          (el: any) => el.checked === true || el.getAttribute("aria-checked") === "true"
+        ).catch(() => false);
+        if (shouldCheck && !isChecked) {
+          await triggerLocator.click().catch(() => {});
+        } else if (!shouldCheck && isChecked) {
+          await triggerLocator.click().catch(() => {});
         }
       } else {
         // text or textarea
@@ -1325,10 +1352,18 @@ export class AutomationRunner {
       if (remember !== false && person?.id && field.label) {
         try {
           await saveAnswerToMemory(person.id, field.label, answer);
-          this.log(`💾 [HITL] Remembered answer for "${field.label}": "${answer}"`, "info");
+          this.log(`💾 [HITL] Remembered answer for "${field.label}": "${masked}"`, "info");
         } catch (memErr: any) {
           this.log(`⚠️ [HITL] Failed to persist answer to memory: ${memErr.message}`, "warn");
         }
+      }
+
+      if (person && field.label) {
+        try {
+          const meta = typeof person.metadata === "string" ? JSON.parse(person.metadata || "{}") : (person.metadata || {});
+          meta.qaMemory = { ...(meta.qaMemory || {}), [normalizeQuestionKey(field.label)]: answer };
+          person.metadata = JSON.stringify(meta);
+        } catch {}
       }
     } catch (applyErr: any) {
       this.log(`⚠️ [HITL] Error applying resolved value to field: ${applyErr.message}`, "warn");

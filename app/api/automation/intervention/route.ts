@@ -5,8 +5,9 @@ import { forwardToHono } from "@/lib/backend-proxy";
 export async function GET() {
   // Forward to Hono backend if available
   const honoRes = await forwardToHono("/api/automation/intervention");
-  if (honoRes && honoRes.ok) {
-    return NextResponse.json(await honoRes.json());
+  if (honoRes !== null) {
+    const data = await honoRes.json().catch(() => ({}));
+    return NextResponse.json(data, { status: honoRes.status });
   }
 
   // Fallback to local runner
@@ -24,8 +25,9 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify(body),
     });
 
-    if (honoRes && honoRes.ok) {
-      return NextResponse.json(await honoRes.json());
+    if (honoRes !== null) {
+      const data = await honoRes.json().catch(() => ({}));
+      return NextResponse.json(data, { status: honoRes.status });
     }
 
     // Fallback to local runner
