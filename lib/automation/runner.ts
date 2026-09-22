@@ -1,7 +1,9 @@
-import { chromium, BrowserContext, Page, CDPSession } from "playwright";
+import { chromium, BrowserContext, Page, CDPSession, Locator } from "playwright";
 import path from "path";
 import fs from "fs";
 import prisma from "../prisma";
+import { resolveFormField, FormFieldPrompt, EventContext } from "./field-resolver";
+import { saveAnswerToMemory } from "./persona";
 
 export interface PacingConfig {
   minInterEventDelay: number;
@@ -113,6 +115,724 @@ export interface FailureRecord {
   type: "custom_form" | "matrix_batch" | "catalog_batch";
   options?: any;
   suggestedFix?: string;
+}
+
+/**
+ * Extracts a human-readable label for any form element or combobox.
+ */
+export async function extractFieldLabel(page: Page, element: Locator): Promise<string> {
+  try {
+    return await element.evaluate((el: HTMLElement) => {
+      // 1. Direct aria-label
+      const ariaLabel = el.getAttribute("aria-label");
+      if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
+
+      // 2. aria-labelledby
+      const labelledBy = el.getAttribute("aria-labelledby");
+      if (labelledBy) {
+        const labels = labelledBy
+          .split(/\s+/)
+          .map((id) => document.getElementById(id)?.innerText || "")
+          .filter(Boolean);
+        const combined = labels.join(" ").trim();
+        if (combined) return combined;
+      }
+
+      // 3. Associated label[for="id"]
+      if (el.id) {
+        try {
+          const forLabel = document.querySelector(`label[for="${CSS.escape(el.id)}"]`) as HTMLElement;
+          if (forLabel && forLabel.innerText.trim()) {
+            return forLabel.innerText.trim();
+          }
+        } catch {}
+      }
+
+      // 4. Enclosing <label>
+      const parentLabel = el.closest("label");
+      if (parentLabel) {
+        const clone = parentLabel.cloneNode(true) as HTMLElement;
+        const nested = clone.querySelectorAll("input, select, textarea, button");
+        nested.forEach((n) => n.remove());
+        const txt = clone.innerText.trim();
+        if (txt) return txt;
+      }
+
+      // 5. Walk parent tree for preceding or ancestor label / legend / heading
+      let cur: HTMLElement | null = el.parentElement;
+      for (let depth = 0; depth < 4 && cur && cur !== document.body; depth++) {
+        const heading = cur.querySelector("label, legend, [class*='label'], [class*='title'], [data-label]");
+        if (heading && heading !== el && !heading.contains(el)) {
+          const txt = (heading as HTMLElement).innerText.trim();
+          if (txt && txt.length < 200) return txt;
+        }
+
+        const prev = cur.previousElementSibling as HTMLElement | null;
+        if (prev) {
+          if (
+            prev.tagName === "LABEL" ||
+            prev.tagName === "SPAN" ||
+            prev.tagName === "P" ||
+            prev.tagName === "DIV" ||
+            prev.tagName === "H3" ||
+            prev.tagName === "H4" ||
+            prev.tagName === "LEGEND"
+          ) {
+            const txt = prev.innerText.trim();
+            if (txt && txt.length < 200) return txt;
+          }
+        }
+        cur = cur.parentElement;
+      }
+
+      // 6. Fallback attributes
+      const placeholder = el.getAttribute("placeholder");
+      if (placeholder && placeholder.trim()) return placeholder.trim();
+
+      const name = el.getAttribute("name");
+      if (name && name.trim()) return name.trim();
+
+      return "";
+    });
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Checks whether an element is required via HTML attributes or text markers.
+ */
+export async function isElementRequired(element: Locator, labelText: string = ""): Promise<boolean> {
+  try {
+    const hasRequiredAttr = await element
+      .evaluate((el: any) => {
+        return (
+          el.required === true ||
+          el.getAttribute("required") !== null ||
+          el.getAttribute("aria-required") === "true" ||
+          el.getAttribute("data-required") === "true"
+        );
+      })
+      .catch(() => false);
+
+    if (hasRequiredAttr) return true;
+    return /\*|\((required|필수)\)|\[(required|필수)\]|\b필수\b/i.test(labelText);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Opens a dropdown trigger and extracts all visible option text strings.
+ */
+export async function extractDropdownOptions(
+  page: Page,
+  trigger: Locator | any
+): Promise<string[]> {
+  try {
+    const triggerLoc = typeof trigger === "string" ? page.locator(trigger) : trigger;
+    await triggerLoc.scrollIntoViewIfNeeded().catch(() => {});
+
+    const portalSelector =
+      'div[role="listbox"], div[role="dialog"], div[data-radix-popper-content-wrapper], .dropdown-menu, ul[role="listbox"], [role="option"]';
+
+    let isAlreadyOpen = false;
+    try {
+      const ariaExpanded = await triggerLoc.getAttribute("aria-expanded");
+      const dataState = await triggerLoc.getAttribute("data-state");
+      isAlreadyOpen = ariaExpanded === "true" || dataState === "open";
+    } catch {}
+
+    if (!isAlreadyOpen) {
+      const existingPortal = page.locator(portalSelector).first();
+      if ((await existingPortal.count()) > 0 && (await existingPortal.isVisible().catch(() => false))) {
+        isAlreadyOpen = true;
+      }
+    }
+
+    if (!isAlreadyOpen) {
+      await triggerLoc.click({ timeout: 2000 });
+      await page.waitForSelector(portalSelector, { state: "visible", timeout: 1500 }).catch(() => null);
+    }
+
+    const optionLocators = await page
+      .locator(
+        '[role="option"], [role="menuitem"], [data-radix-collection-item], [cmdk-item], .dropdown-item, [role="listbox"] li, [role="listbox"] [role="option"], [role="listbox"] div'
+      )
+      .all();
+
+    const options: string[] = [];
+    for (const opt of optionLocators) {
+      if (await opt.isVisible().catch(() => false)) {
+        const txt = (await opt.innerText().catch(() => "")).trim();
+        const val = ((await opt.getAttribute("data-value").catch(() => "")) || "").trim();
+        const chosen = txt || val;
+        if (chosen && !options.includes(chosen)) {
+          options.push(chosen);
+        }
+      }
+    }
+    return options;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Interacts with a Radix UI or custom dropdown / combobox / popover.
+ * Opens the dropdown portal if closed, extracts options if callback is provided,
+ * selects the matching option, and ensures popover dismissal.
+ */
+export async function interactWithDropdown(
+  page: Page,
+  trigger: Locator | any,
+  targetValue:
+    | string
+    | ((options: string[]) => Promise<string | null | undefined> | string | null | undefined)
+): Promise<boolean> {
+  try {
+    const triggerLoc = typeof trigger === "string" ? page.locator(trigger) : trigger;
+    await triggerLoc.scrollIntoViewIfNeeded().catch(() => {});
+
+    const portalSelector =
+      'div[role="listbox"], div[role="dialog"], div[data-radix-popper-content-wrapper], .dropdown-menu, ul[role="listbox"], [role="option"]';
+
+    let isAlreadyOpen = false;
+    try {
+      const ariaExpanded = await triggerLoc.getAttribute("aria-expanded");
+      const dataState = await triggerLoc.getAttribute("data-state");
+      isAlreadyOpen = ariaExpanded === "true" || dataState === "open";
+    } catch {}
+
+    if (!isAlreadyOpen) {
+      const existingPortal = page.locator(portalSelector).first();
+      if ((await existingPortal.count()) > 0 && (await existingPortal.isVisible().catch(() => false))) {
+        isAlreadyOpen = true;
+      }
+    }
+
+    if (!isAlreadyOpen) {
+      await triggerLoc.click({ timeout: 2000 });
+      await page.waitForSelector(portalSelector, { state: "visible", timeout: 1500 }).catch(() => null);
+    }
+
+    // Extract all available option elements
+    const optionLocators = await page
+      .locator(
+        '[role="option"], [role="menuitem"], [data-radix-collection-item], [cmdk-item], .dropdown-item, [role="listbox"] li, [role="listbox"] [role="option"], [role="listbox"] div'
+      )
+      .all();
+
+    const optionsList: { loc: Locator; text: string; valueAttr: string }[] = [];
+    for (const optLoc of optionLocators) {
+      if (await optLoc.isVisible().catch(() => false)) {
+        const txt = (await optLoc.innerText().catch(() => "")).trim();
+        const val = ((await optLoc.getAttribute("data-value").catch(() => "")) || "").trim();
+        if (txt || val) {
+          optionsList.push({ loc: optLoc, text: txt, valueAttr: val });
+        }
+      }
+    }
+
+    const availableOptionTexts = optionsList.map((o) => o.text || o.valueAttr);
+
+    let desiredValue: string | null | undefined = "";
+    if (typeof targetValue === "function") {
+      desiredValue = await targetValue(availableOptionTexts);
+    } else {
+      desiredValue = targetValue;
+    }
+
+    if (!desiredValue) {
+      await page.keyboard.press("Escape").catch(() => {});
+      return false;
+    }
+
+    const targetLower = desiredValue.trim().toLowerCase();
+
+    // Pass 1: Exact match
+    let matched = optionsList.find(
+      (o) =>
+        o.text.trim().toLowerCase() === targetLower ||
+        o.valueAttr.trim().toLowerCase() === targetLower
+    );
+
+    // Pass 2: Contains match
+    if (!matched) {
+      matched = optionsList.find(
+        (o) =>
+          o.text.trim().toLowerCase().includes(targetLower) ||
+          targetLower.includes(o.text.trim().toLowerCase()) ||
+          o.valueAttr.trim().toLowerCase().includes(targetLower) ||
+          targetLower.includes(o.valueAttr.trim().toLowerCase())
+      );
+    }
+
+    if (matched) {
+      await matched.loc.scrollIntoViewIfNeeded().catch(() => {});
+      await matched.loc.click({ timeout: 2000 });
+      await page.waitForTimeout(200);
+
+      // Check if popup remains open; if so, dismiss
+      const stillOpen = await page
+        .locator('div[role="listbox"]:visible, div[data-radix-popper-content-wrapper]:visible, .dropdown-menu:visible')
+        .first()
+        .isVisible()
+        .catch(() => false);
+
+      if (stillOpen) {
+        await page.keyboard.press("Escape").catch(() => {});
+        await page.waitForTimeout(100);
+      }
+      return true;
+    } else {
+      await page.keyboard.press("Escape").catch(() => {});
+      return false;
+    }
+  } catch (err: any) {
+    console.warn(`[interactWithDropdown] Failed dropdown interaction: ${err.message}`);
+    await page.keyboard.press("Escape").catch(() => {});
+    return false;
+  }
+}
+
+/**
+ * Universal Intelligent Form Field Filler
+ * Handles text inputs, textareas, custom Radix popovers/comboboxes, HTML selects,
+ * radio groups, and checkboxes using FieldResolver and persona memory.
+ */
+export async function fillFormFields(
+  page: Page,
+  person: any,
+  pacing: PacingConfig = DEFAULT_PACING,
+  eventContext?: EventContext,
+  logFn?: (msg: string, level?: RunnerLog["level"]) => void
+): Promise<void> {
+  const log = (msg: string, level: RunnerLog["level"] = "info") => {
+    if (logFn) {
+      logFn(msg, level);
+    } else {
+      if (level === "error") console.error(msg);
+      else if (level === "warn") console.warn(msg);
+      else console.log(msg);
+    }
+  };
+
+  log(`🤖 Starting intelligent form filling for ${person?.name || person?.email || "attendee"}...`, "info");
+
+  // -------------------------------------------------------------
+  // 1. Custom Radix popovers, comboboxes, and floating pickers
+  // -------------------------------------------------------------
+  const comboboxTriggers = await page
+    .locator(
+      'button[role="combobox"], [role="combobox"], button[aria-haspopup="listbox"], button[data-state][aria-haspopup], [data-radix-select-trigger], input[placeholder*="Select"], input[placeholder*="선택"], input[readonly][placeholder*="option"]'
+    )
+    .all();
+
+  for (const trigger of comboboxTriggers) {
+    try {
+      if (!(await trigger.isVisible().catch(() => false))) continue;
+
+      const isHandled = await trigger.evaluate((el: any) => {
+        if (el.dataset.autobotHandled === "true") return true;
+        el.dataset.autobotHandled = "true";
+        return false;
+      });
+      if (isHandled) continue;
+
+      const label = await extractFieldLabel(page, trigger);
+      const isRequired = await isElementRequired(trigger, label);
+      const options = await extractDropdownOptions(page, trigger);
+
+      const fieldPrompt: FormFieldPrompt = {
+        label: label || "Dropdown option",
+        type: "combobox",
+        options,
+        isRequired,
+      };
+
+      const resolution = await resolveFormField(fieldPrompt, person, eventContext);
+
+      if (resolution.requiresHumanIntervention) {
+        log(
+          `[Runner HITL Alert] ⚠️ Combobox "${label}" requires human intervention! (Confidence: ${resolution.confidence}, Reason: ${resolution.reasoning})`,
+          "warn"
+        );
+      } else {
+        log(`🎯 Resolved combobox [${label}]: "${resolution.value}" (confidence: ${resolution.confidence})`, "info");
+      }
+
+      if (resolution.value) {
+        await interactWithDropdown(page, trigger, resolution.value);
+      } else {
+        await page.keyboard.press("Escape").catch(() => {});
+      }
+
+      if (resolution.shouldRemember && resolution.value && person?.id && label) {
+        try {
+          await saveAnswerToMemory(person.id, label, resolution.value);
+        } catch (memErr: any) {
+          log(`⚠️ Failed to persist answer to memory: ${memErr.message}`, "warn");
+        }
+      }
+
+      await page.waitForTimeout(pacing.fieldDelayMs || 250);
+    } catch (cbErr: any) {
+      log(`⚠️ Minor issue handling combobox: ${cbErr.message}`, "warn");
+    }
+  }
+
+  // -------------------------------------------------------------
+  // 2. Radio Groups (ARIA radiogroups & native input[type="radio"])
+  // -------------------------------------------------------------
+  const radioGroups = await page.locator('div[role="radiogroup"], [role="radiogroup"]').all();
+  for (const rg of radioGroups) {
+    try {
+      if (!(await rg.isVisible().catch(() => false))) continue;
+
+      const isHandled = await rg.evaluate((el: any) => {
+        if (el.dataset.autobotHandled === "true") return true;
+        el.dataset.autobotHandled = "true";
+        return false;
+      });
+      if (isHandled) continue;
+
+      const label = await extractFieldLabel(page, rg);
+      const isRequired = await isElementRequired(rg, label);
+
+      const radioItems = await rg.locator('[role="radio"]').all();
+      const options: string[] = [];
+      for (const item of radioItems) {
+        const txt = (await item.innerText().catch(() => "")).trim();
+        const val = ((await item.getAttribute("value").catch(() => "")) || "").trim();
+        const opt = txt || val;
+        if (opt && !options.includes(opt)) options.push(opt);
+      }
+
+      const fieldPrompt: FormFieldPrompt = {
+        label: label || "Radio options",
+        type: "radio",
+        options,
+        isRequired,
+      };
+
+      const resolution = await resolveFormField(fieldPrompt, person, eventContext);
+
+      if (resolution.requiresHumanIntervention) {
+        log(`[Runner HITL Alert] ⚠️ Radio group "${label}" requires human intervention!`, "warn");
+      }
+
+      if (resolution.value) {
+        const targetLower = resolution.value.trim().toLowerCase();
+        for (const item of radioItems) {
+          const txt = (await item.innerText().catch(() => "")).trim().toLowerCase();
+          const val = ((await item.getAttribute("value").catch(() => "")) || "").trim().toLowerCase();
+          if (txt === targetLower || val === targetLower || txt.includes(targetLower)) {
+            await item.scrollIntoViewIfNeeded().catch(() => {});
+            await item.click().catch(() => {});
+            break;
+          }
+        }
+      }
+
+      if (resolution.shouldRemember && resolution.value && person?.id && label) {
+        try {
+          await saveAnswerToMemory(person.id, label, resolution.value);
+        } catch {}
+      }
+
+      await page.waitForTimeout(pacing.fieldDelayMs || 200);
+    } catch (rgErr: any) {
+      log(`⚠️ Minor issue handling radio group: ${rgErr.message}`, "warn");
+    }
+  }
+
+  // Native radio inputs grouped by name
+  const nativeRadios = await page.locator('input[type="radio"]').all();
+  const radioByName = new Map<string, Locator[]>();
+  for (const r of nativeRadios) {
+    if (!(await r.isVisible().catch(() => false))) continue;
+    const name = (await r.getAttribute("name").catch(() => "")) || "unnamed";
+    if (!radioByName.has(name)) radioByName.set(name, []);
+    radioByName.get(name)!.push(r);
+  }
+
+  for (const [groupName, rList] of radioByName.entries()) {
+    try {
+      const firstRadio = rList[0];
+      const isHandled = await firstRadio.evaluate((el: any) => {
+        if (el.dataset.autobotHandled === "true") return true;
+        el.dataset.autobotHandled = "true";
+        return false;
+      });
+      if (isHandled) continue;
+
+      const groupLabel =
+        (await firstRadio.evaluate((el: any) => {
+          const fieldset = el.closest("fieldset");
+          if (fieldset) {
+            const legend = fieldset.querySelector("legend");
+            if (legend) return legend.innerText;
+          }
+          return "";
+        })) || (await extractFieldLabel(page, firstRadio)) || groupName;
+
+      const options: string[] = [];
+      for (const r of rList) {
+        const lbl = await extractFieldLabel(page, r);
+        const val = (await r.getAttribute("value").catch(() => "")) || "";
+        const choice = lbl || val;
+        if (choice && !options.includes(choice)) options.push(choice);
+      }
+
+      const resolution = await resolveFormField(
+        {
+          label: groupLabel,
+          type: "radio",
+          options,
+          isRequired: true,
+        },
+        person,
+        eventContext
+      );
+
+      if (resolution.requiresHumanIntervention) {
+        log(`[Runner HITL Alert] ⚠️ Radio group "${groupLabel}" requires human intervention!`, "warn");
+      }
+
+      if (resolution.value) {
+        const targetLower = resolution.value.trim().toLowerCase();
+        for (const r of rList) {
+          const lbl = (await extractFieldLabel(page, r)).trim().toLowerCase();
+          const val = ((await r.getAttribute("value").catch(() => "")) || "").trim().toLowerCase();
+          if (lbl === targetLower || val === targetLower || lbl.includes(targetLower)) {
+            await r.scrollIntoViewIfNeeded().catch(() => {});
+            await r.click().catch(() => {});
+            break;
+          }
+        }
+      }
+
+      if (resolution.shouldRemember && resolution.value && person?.id && groupLabel) {
+        try {
+          await saveAnswerToMemory(person.id, groupLabel, resolution.value);
+        } catch {}
+      }
+
+      await page.waitForTimeout(pacing.fieldDelayMs || 200);
+    } catch (e) {}
+  }
+
+  // -------------------------------------------------------------
+  // 3. HTML Dropdowns (<select>)
+  // -------------------------------------------------------------
+  const selects = await page.locator("select").all();
+  for (const sel of selects) {
+    try {
+      if (!(await sel.isVisible().catch(() => false))) continue;
+
+      const isHandled = await sel.evaluate((el: any) => {
+        if (el.dataset.autobotHandled === "true") return true;
+        el.dataset.autobotHandled = "true";
+        return false;
+      });
+      if (isHandled) continue;
+
+      const label = await extractFieldLabel(page, sel);
+      const isRequired = await isElementRequired(sel, label);
+      const options = await sel.evaluate((s: HTMLSelectElement) =>
+        Array.from(s.options)
+          .map((o) => (o.text || o.value || "").trim())
+          .filter(Boolean)
+      );
+
+      if (options.length > 0) {
+        const resolution = await resolveFormField(
+          {
+            label: label || "Select option",
+            type: "select",
+            options,
+            isRequired,
+          },
+          person,
+          eventContext
+        );
+
+        if (resolution.requiresHumanIntervention) {
+          log(`[Runner HITL Alert] ⚠️ Select "${label}" requires human intervention!`, "warn");
+        }
+
+        if (resolution.value) {
+          const targetLower = resolution.value.trim().toLowerCase();
+          const matchIdx = options.findIndex(
+            (o) => o.toLowerCase() === targetLower || o.toLowerCase().includes(targetLower)
+          );
+          if (matchIdx >= 0) {
+            await sel.selectOption({ index: matchIdx }).catch(() => {});
+          } else {
+            await sel.selectOption({ label: resolution.value }).catch(() => {});
+          }
+        } else if (options.length > 1) {
+          await sel.selectOption({ index: 1 }).catch(() => {});
+        }
+
+        if (resolution.shouldRemember && resolution.value && person?.id && label) {
+          try {
+            await saveAnswerToMemory(person.id, label, resolution.value);
+          } catch {}
+        }
+      }
+      await page.waitForTimeout(pacing.fieldDelayMs || 150);
+    } catch (e) {}
+  }
+
+  // -------------------------------------------------------------
+  // 4. Text Inputs & Textareas
+  // -------------------------------------------------------------
+  const textInputs = await page
+    .locator(
+      "input[type='text'], input[type='email'], input[type='tel'], input[type='url'], input[type='number'], input:not([type]), textarea"
+    )
+    .all();
+
+  for (const inp of textInputs) {
+    try {
+      if (!(await inp.isVisible().catch(() => false))) continue;
+
+      const isComboboxOrHandled = await inp.evaluate((el: any) => {
+        if (el.dataset.autobotHandled === "true") return true;
+        if (el.getAttribute("role") === "combobox" || (el.readOnly && /select|선택/i.test(el.placeholder || ""))) {
+          return true;
+        }
+        el.dataset.autobotHandled = "true";
+        return false;
+      });
+      if (isComboboxOrHandled) continue;
+
+      const label = await extractFieldLabel(page, inp);
+      const placeholder = (await inp.getAttribute("placeholder").catch(() => "")) || "";
+      const nameAttr = (await inp.getAttribute("name").catch(() => "")) || "";
+      const isRequired = await isElementRequired(inp, label);
+      const tagName = await inp.evaluate((el: any) => el.tagName.toLowerCase());
+      const fieldType: "text" | "textarea" = tagName === "textarea" ? "textarea" : "text";
+
+      const resolution = await resolveFormField(
+        {
+          label: label || placeholder || nameAttr || "Text input",
+          placeholder,
+          nameAttr,
+          type: fieldType,
+          isRequired,
+        },
+        person,
+        eventContext
+      );
+
+      if (resolution.requiresHumanIntervention) {
+        log(
+          `[Runner HITL Alert] ⚠️ Field "${label || placeholder || nameAttr}" requires human intervention! (Confidence: ${resolution.confidence})`,
+          "warn"
+        );
+      } else {
+        const masked = resolution.value.length > 3 ? resolution.value.slice(0, 3) + "***" : resolution.value;
+        log(`✍️ Filled [${label || placeholder || nameAttr}]: "${masked}" (confidence: ${resolution.confidence})`, "info");
+      }
+
+      let valueToFill = resolution.value;
+      // Fallback for unclassified required inputs
+      if (!valueToFill && isRequired) {
+        valueToFill = person?.company || person?.name || "Dopamint";
+      }
+
+      if (valueToFill) {
+        await inp.scrollIntoViewIfNeeded().catch(() => {});
+        await inp.focus().catch(() => {});
+        await inp.fill(valueToFill);
+        await inp.dispatchEvent("input");
+        await inp.dispatchEvent("change");
+      }
+
+      if (resolution.shouldRemember && resolution.value && person?.id && label) {
+        try {
+          await saveAnswerToMemory(person.id, label, resolution.value);
+        } catch (memErr: any) {
+          log(`⚠️ Failed to persist answer to memory: ${memErr.message}`, "warn");
+        }
+      }
+
+      await page.waitForTimeout(pacing.fieldDelayMs || 250);
+    } catch (inpErr: any) {
+      log(`⚠️ Minor issue filling text input: ${inpErr.message}`, "warn");
+    }
+  }
+
+  // -------------------------------------------------------------
+  // 5. Checkboxes & Consent Toggles
+  // -------------------------------------------------------------
+  const checkboxes = await page.locator("input[type='checkbox'], [role='checkbox']").all();
+  for (const cb of checkboxes) {
+    try {
+      if (!(await cb.isVisible().catch(() => false))) continue;
+
+      const isHandled = await cb.evaluate((el: any) => {
+        if (el.dataset.autobotHandled === "true") return true;
+        el.dataset.autobotHandled = "true";
+        return false;
+      });
+      if (isHandled) continue;
+
+      const label = await extractFieldLabel(page, cb);
+      const isRequired = await isElementRequired(cb, label);
+
+      const resolution = await resolveFormField(
+        {
+          label: label || "Agreement",
+          type: "checkbox",
+          isRequired,
+        },
+        person,
+        eventContext
+      );
+
+      if (resolution.requiresHumanIntervention) {
+        log(`[Runner HITL Alert] ⚠️ Checkbox "${label}" requires human intervention!`, "warn");
+      }
+
+      const shouldCheck =
+        resolution.value === "true" ||
+        isRequired ||
+        /agree|consent|terms|policy|동의/i.test(label);
+
+      if (shouldCheck) {
+        const isChecked = await cb.evaluate(
+          (el: any) => el.checked === true || el.getAttribute("aria-checked") === "true"
+        );
+        if (!isChecked) {
+          await cb.scrollIntoViewIfNeeded().catch(() => {});
+          await cb.click().catch(async () => {
+            await cb.evaluate((el: any) => {
+              if (!el.checked) {
+                el.checked = true;
+                el.dispatchEvent(new Event("change", { bubbles: true }));
+              }
+            });
+          });
+        }
+      }
+
+      if (resolution.shouldRemember && resolution.value && person?.id && label) {
+        try {
+          await saveAnswerToMemory(person.id, label, resolution.value);
+        } catch {}
+      }
+
+      await page.waitForTimeout(100);
+    } catch (cbErr: any) {
+      log(`⚠️ Minor issue handling checkbox: ${cbErr.message}`, "warn");
+    }
+  }
+
+  log(`✅ Form filling completed.`, "success");
 }
 
 class AutomationRunner {
@@ -802,8 +1522,13 @@ class AutomationRunner {
               await page.waitForTimeout(pacing.modalOpenWaitMs);
             }
 
-            // Fill form fields
-            await this.fillFormFields(page, person, pacing);
+            // Fill form fields with event context
+            await this.fillFormFields(page, person, pacing, {
+              title: ev.title,
+              url: ev.url,
+              host: (ev as any).host || (ev as any).organizer,
+              description: (ev as any).description,
+            });
 
             // Pre-submit review pause
             await page.waitForTimeout(pacing.preSubmitDelayMs);
@@ -930,146 +1655,25 @@ class AutomationRunner {
     }
   }
 
-  private async fillFormFields(page: Page, person: any, pacing: PacingConfig) {
-    const inputs = await page
-      .locator(
-        "form input[type='text'], form input[type='email'], form input[type='tel'], form input[type='url'], form textarea"
-      )
-      .all();
-
-    let walletAddress = "";
-    if (person.wallets) {
-      try {
-        const parsed = JSON.parse(person.wallets);
-        walletAddress = parsed.evm || parsed.eth || parsed.sol || parsed.address || "";
-      } catch {
-        walletAddress = person.wallets;
-      }
-    }
-    if (!walletAddress) {
-      walletAddress = process.env.DEFAULT_FALLBACK_WALLET || "";
-    }
-
-    for (const inp of inputs) {
-      if (!(await inp.isVisible())) continue;
-
-      const labelText = await inp
-        .evaluate((el: any) => {
-          let txt = "";
-          if (el.id) {
-            const lbl = document.querySelector(`label[for="${el.id}"]`) as HTMLElement;
-            if (lbl) return lbl.innerText;
-          }
-          let cur = el.parentElement;
-          while (cur && cur !== document.body) {
-            if (cur.tagName === "LABEL") {
-              txt = cur.innerText;
-              break;
-            }
-            const prev = cur.previousElementSibling as HTMLElement;
-            if (
-              prev &&
-              (prev.tagName === "LABEL" || prev.tagName === "SPAN" || prev.tagName === "P")
-            ) {
-              txt = prev.innerText;
-              break;
-            }
-            cur = cur.parentElement;
-          }
-          return txt;
-        })
-        .catch(() => "");
-
-      const placeholder = (await inp.getAttribute("placeholder").catch(() => "")) || "";
-      const nameAttr = (await inp.getAttribute("name").catch(() => "")) || "";
-      const combined = `${labelText} ${placeholder} ${nameAttr}`.toLowerCase();
-
-      if (/first\s*name|given\s*name|이름/i.test(combined) && !/last|성\b/i.test(combined)) {
-        await inp.fill(person.firstName || person.name);
-      } else if (/last\s*name|family\s*name|surname|성\b/i.test(combined)) {
-        await inp.fill(person.lastName || "");
-      } else if (
-        /full\s*name|your\s*name|\bname\b/i.test(combined) &&
-        !/company|project/i.test(combined)
-      ) {
-        await inp.fill(person.name);
-      } else if (/email|이메일/i.test(combined)) {
-        await inp.fill(person.email);
-      } else if (/phone|mobile|전화|연락처/i.test(combined)) {
-        await inp.fill(person.phone || process.env.DEFAULT_FALLBACK_PHONE || "");
-      } else if (/company\s*website|project\s*website|website|url|홈페이지/i.test(combined)) {
-        await inp.fill(person.website || process.env.DEFAULT_FALLBACK_WEBSITE || "https://dopamint.xyz");
-      } else if (/telegram|텔레그램|\btg\b/i.test(combined)) {
-        await inp.fill(person.telegram || process.env.DEFAULT_FALLBACK_TELEGRAM || "");
-      } else if (/twitter|트위터|\bx handle\b|\bx profile\b|\bx username\b/i.test(combined)) {
-        await inp.fill(person.twitter || process.env.DEFAULT_FALLBACK_TWITTER || "");
-      } else if (/linkedin|링크드인/i.test(combined)) {
-        await inp.fill(person.linkedin || "");
-      } else if (/eth|evm|지갑|wallet|solana|sol\b/i.test(combined)) {
-        await inp.fill(walletAddress);
-      } else if (/company|project|소속|회사|organization|firm/i.test(combined)) {
-        await inp.fill(person.company);
-      } else if (/role|title|직함|position|job/i.test(combined)) {
-        await inp.fill(person.role);
-      } else if (/country|based|국가|where.*based/i.test(combined)) {
-        await inp.fill(person.country || "South Korea");
-      } else if (/tweet|quote\s*tweet|x\s*link|twitter\s*link/i.test(combined)) {
-        await inp.fill("https://x.com/aswinvishal/status/18385739201948201");
-      } else if (/who invited|초대|추천인|how\s*did\s*you\s*hear|referred|referral/i.test(combined)) {
-        await inp.fill("Dopamint / Ecosystem Partner");
-      } else if (/dietary|allergy|음식|식사/i.test(combined)) {
-        await inp.fill("None (없음)");
-      } else if (/pitch|building|describe|message|inquiry|query|comment|feedback|notes|소개|이유|계기|관심|질문|신청/i.test(combined)) {
-        await inp.fill(person.pitch || person.message || "Building autonomous AI agent platforms and decentralized data compute.");
-      } else if (placeholder.includes("Select an option") || placeholder.includes("선택")) {
-        try {
-          await inp.click();
-          await page.waitForTimeout(300);
-          const opt = page.locator("[role='option'], [role='menuitem'], .dropdown-item, li").first();
-          if (await opt.isVisible()) {
-            await opt.click();
-            await page.waitForTimeout(200);
-          }
-        } catch (e) {}
-      } else {
-        // Safe fallback for unclassified required inputs
-        const isRequired = await inp.getAttribute("required").catch(() => false) || combined.includes("*");
-        if (isRequired) {
-          await inp.fill(person.company || "Dopamint");
-        }
-      }
-
-      await page.waitForTimeout(pacing.fieldDelayMs);
-    }
-
-    // HTML Dropdowns (<select>)
-    const selects = await page.locator("select").all();
-    for (const sel of selects) {
-      try {
-        if (!(await sel.isVisible())) continue;
-        const optionCount = await sel.locator("option").count();
-        if (optionCount > 1) {
-          await sel.selectOption({ index: 1 });
-          await page.waitForTimeout(150);
-        }
-      } catch (e) {}
-    }
-
-    // Checkboxes / Consent waivers (both form and modal level)
-    const checkboxes = await page.locator("input[type='checkbox']").all();
-    for (const cb of checkboxes) {
-      try {
-        if (!(await cb.isVisible())) continue;
-        await cb.evaluate((el: any) => {
-          if (!el.checked) {
-            el.click();
-            el.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-        });
-        await page.waitForTimeout(200);
-      } catch (e) {}
-    }
+  public async fillFormFields(
+    page: Page,
+    person: any,
+    pacing: PacingConfig = DEFAULT_PACING,
+    eventContext?: EventContext
+  ): Promise<void> {
+    return fillFormFields(page, person, pacing, eventContext, (msg, level) => this.log(msg, level));
   }
+
+  public async interactWithDropdown(
+    page: Page,
+    trigger: Locator | any,
+    targetValue:
+      | string
+      | ((options: string[]) => Promise<string | null | undefined> | string | null | undefined)
+  ): Promise<boolean> {
+    return interactWithDropdown(page, trigger, targetValue);
+  }
+
 
   public async inspectFormFields(url: string): Promise<InspectionResult> {
     const profileDir = process.env.BROWSER_PROFILE_PATH
